@@ -104,7 +104,7 @@ Return ONLY this JSON (no markdown, no code fences):
   "focus_keyword": "Primary Hindi SEO keyword",
   "keywords": ["kw1","kw2","kw3","kw4","kw5","kw6","kw7"],
   "highlights": ["Key fact 1 in Hindi (under 15 words)", "Key fact 2", "Key fact 3", "Key fact 4", "Key fact 5"],
-  "faq": [{"q": "Hindi question about the topic?", "a": "Detailed Hindi answer in 2-3 sentences."}, {"q": "Second common question?", "a": "Answer."}, {"q": "Third question?", "a": "Answer."}, {"q": "Fourth question?", "a": "Answer."}],
+  "faq": [{{"q": "Hindi question about the topic?", "a": "Detailed Hindi answer in 2-3 sentences."}}, {{"q": "Second common question?", "a": "Answer."}}, {{"q": "Third question?", "a": "Answer."}}, {{"q": "Fourth question?", "a": "Answer."}}],
   "article": "Full Hindi article. Use ## for H2 headings, ### for H3. Minimum 900 words. Include facts, data, expert opinions, India angle, strong conclusion.",
   "image_prompt": "Photorealistic 16:9 scene description in English. Max 100 words.",
   "sources": ["Source Name: Article headline"],
