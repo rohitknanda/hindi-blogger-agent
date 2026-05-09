@@ -261,6 +261,10 @@ def add_internal_links(html, article, existing_posts):
 # ── HTML Formatter ────────────────────────────────────────────────────────────
 def format_html(article: dict, image_url: str) -> str:
     body = article.get("article", "")
+    # Convert markdown bold/italic to HTML
+    body = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", body)
+    body = re.sub(r"\*(.+?)\*", r"<em>\1</em>", body)
+    body = re.sub(r"__(.+?)__", r"<strong>\1</strong>", body)
     body = re.sub(
         r"^## (.+)$",
         r'<h2 style="font-size:1.35em;margin:1.5em 0 .5em;color:#1a1a2e">\1</h2>',
