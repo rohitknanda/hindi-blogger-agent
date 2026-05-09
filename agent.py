@@ -86,7 +86,7 @@ stats = {"generated": 0, "published": 0, "errors": 0, "skipped": 0}
 genai.configure(api_key=GEMINI_API_KEY)
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are Rohit Kumar, an expert Hindi science journalist and SEO specialist at Vigyan Ki Duniya.
+SYSTEM_PROMPT = """You are an expert Hindi science journalist and SEO specialist at Vigyan Ki Duniya.
 Write in a warm, conversational, human voice — NOT like AI. Add personal observations, real-world analogies, and unique Indian perspective.
 STRICT RULES:
 1. Only cover: Science, Technology, Automobile — NO politics, NO LPG rules, NO general utility content
@@ -325,6 +325,11 @@ def add_internal_links(html, article, existing_posts):
 # ── HTML Formatter ────────────────────────────────────────────────────────────
 def format_html(article: dict, image_url: str) -> str:
     body = article.get("article", "")
+    # Strip author signatures Gemini sometimes adds
+    import re as _re
+    body = _re.sub(r"[-—–]+\s*रोहित कुमार[^\n]*\n?", "", body)
+    body = _re.sub(r"[-—–]+\s*Rohit Kumar[^\n]*\n?", "", body, flags=_re.IGNORECASE)
+    body = _re.sub(r"[-—–]+\s*विज्ञान की दुनिया[^\n]*\n?", "", body)
     # Convert markdown bold/italic to HTML
     body = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", body)
     body = re.sub(r"\*(.+?)\*", r"<em>\1</em>", body)
