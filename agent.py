@@ -151,8 +151,7 @@ def make_slug(text: str) -> str:
 
 
 # ── Internal Linking ─────────────────────────────────────────────────────────
-def fetch_existing_posts(max_posts: int = 30) -> list:
-    """Fetch recent post titles + URLs from Blogger or WordPress."""
+def fetch_existing_posts(max_posts=100):
     posts = []
     try:
         if PLATFORM == "blogger" and BLOG_ID:
@@ -165,79 +164,82 @@ def fetch_existing_posts(max_posts: int = 30) -> list:
             )
             if r.ok:
                 for item in r.json().get("items", []):
-                    posts.append({
-                        "title": item.get("title", ""),
-                        "url":   item.get("url", ""),
-                    })
-
+                    posts.append({"title": item.get("title",""), "url": item.get("url","")})
         elif PLATFORM == "wordpress" and WP_URL:
-            auth = (WP_USERNAME, WP_APP_PASSWORD)
             r = requests.get(
                 f"{WP_URL}/wp-json/wp/v2/posts",
-                auth=auth,
+                auth=(WP_USERNAME, WP_APP_PASSWORD),
                 params={"per_page": max_posts, "_fields": "title,link"},
                 timeout=15,
             )
             if r.ok:
                 for item in r.json():
-                    posts.append({
-                        "title": item.get("title", {}).get("rendered", ""),
-                        "url":   item.get("link", ""),
-                    })
+                    posts.append({"title": item.get("title",{}).get("rendered",""), "url": item.get("link","")})
     except Exception as e:
-        log.warning(f"  Internal linking: fetch failed — {e}")
-
-    log.info(f"  Fetched {len(posts)} existing posts for internal linking")
+        log.warning(f"  Internal linking fetch failed: {e}")
+    log.info(f"  Fetched {len(posts)} posts for internal linking")
     return posts
 
 
-def add_internal_links(html: str, article: dict, existing_posts: list) -> str:
-    """
-    Add up to 4 internal links in article HTML.
-    Matches article keywords against existing post titles.
-    Each keyword linked only once.
-    """
+def add_internal_links(html, article, existing_posts):
     if not existing_posts:
         return html
-
-    current_title = article.get("title", "").lower()
-    keywords = [k.strip().lower() for k in article.get("keywords", [])]
+    current_title = article.get("title","").lower()
+    keywords = [k.strip().lower() for k in article.get("keywords",[])]
     links_added = 0
     max_links = 4
+    linked_urls = set()
 
     for post in existing_posts:
         if links_added >= max_links:
             break
-
-        post_title = post.get("title", "").strip()
-        post_url   = post.get("url", "").strip()
-
+        post_title = post.get("title","").strip()
+        post_url   = post.get("url","").strip()
         if not post_title or not post_url:
             continue
-
-        # Do not link to current article
         if post_title.lower() == current_title:
             continue
+        if post_url in linked_urls:
+            continue
 
-        # Find matching keyword
+        # Split post title into individual words
+        separators = re.compile(r"[\s,।?!:;]+")
+        post_words = [w for w in separators.split(post_title) if len(w) >= 3]
+
         match_word = None
-        for kw in keywords:
-            if len(kw) < 4:
-                continue
-            if kw in post_title.lower() or post_title.lower() in kw:
-                match_word = kw
+
+        # Strategy 1: post title word appears in article keywords
+        for pw in post_words:
+            pw_l = pw.lower()
+            for kw in keywords:
+                if pw_l in kw or kw in pw_l:
+                    if pw_l in html.lower():
+                        match_word = pw
+                        break
+            if match_word:
                 break
+
+        # Strategy 2: article keyword word appears in post title
+        if not match_word:
+            for kw in keywords:
+                kw_parts = [w for w in separators.split(kw) if len(w) >= 4]
+                for part in kw_parts:
+                    if part.lower() in post_title.lower() and part.lower() in html.lower():
+                        match_word = part
+                        break
+                if match_word:
+                    break
 
         if not match_word:
             continue
 
-        # Find first occurrence in HTML (case-insensitive, not already linked)
+        # Find in HTML body
         lower_html = html.lower()
-        idx = lower_html.find(match_word)
+        idx = lower_html.find(match_word.lower())
         if idx == -1:
             continue
 
-        # Skip if already inside an anchor tag
+        # Skip if inside anchor
         before = html[:idx]
         if before.count("<a ") > before.count("</a>"):
             continue
@@ -249,10 +251,11 @@ def add_internal_links(html: str, article: dict, existing_posts: list) -> str:
             f' title="{post_title}">{original}</a>'
         )
         html = html[:idx] + link_tag + html[idx + len(match_word):]
+        linked_urls.add(post_url)
         links_added += 1
-        log.info(f"  Linked '{match_word}' → {post_url[:55]}...")
+        log.info(f"  Linked: {match_word!r} → {post_url[:55]}")
 
-    log.info(f"  Internal links added: {links_added}")
+    log.info(f"  Total internal links added: {links_added}")
     return html
 
 # ── HTML Formatter ────────────────────────────────────────────────────────────
@@ -497,7 +500,7 @@ def run_cycle() -> bool:
             html = format_html(article, image_url)
 
             # Internal linking
-            log.info("  Fetching posts for internal linking...")
+            log.info("  Fetching existing posts for internal linking...")
             existing = fetch_existing_posts()
             html = add_internal_links(html, article, existing)
 
