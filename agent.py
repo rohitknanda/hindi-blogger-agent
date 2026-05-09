@@ -87,10 +87,14 @@ genai.configure(api_key=GEMINI_API_KEY)
 # ── Prompts ───────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert Hindi content writer and SEO specialist writing for Indian readers.
 Write engaging, factual, deeply informative articles in Hindi (Devanagari script).
+IMPORTANT: Only write about news, discoveries, or launches from the LAST 30 DAYS.
+Never write about topics older than 1 month. If unsure, pick the most recent event.
 Professional tone. Return ONLY raw JSON — no markdown, no backticks, no extra text."""
 
-ARTICLE_PROMPT = """Write a comprehensive SEO-optimised Hindi blog article about the latest trending
-development in {category}. Use reputed sources: {sources}.
+ARTICLE_PROMPT = """Today's date is {today}. Write a comprehensive SEO-optimised Hindi blog article
+about a RECENT trending development in {category} from the LAST 30 DAYS ONLY.
+Use reputed sources: {sources}.
+STRICT RULE: The topic MUST be from {month_year} or at most one month before. No older news.
 
 Return ONLY this JSON (no markdown, no code fences):
 {{
@@ -113,14 +117,34 @@ Return ONLY this JSON (no markdown, no code fences):
 # ── Article Generation ────────────────────────────────────────────────────────
 def generate_article(category: str) -> dict:
     sources_str = ", ".join(SOURCES.get(category, SOURCES["technology"]))
-    prompt = ARTICLE_PROMPT.format(category=category, sources=sources_str)
-
-    log.info("  Calling Gemini API...")
-    model = genai.GenerativeModel(
-        model_name="gemini-flash-latest",
-        system_instruction=SYSTEM_PROMPT,
+    today = datetime.now().strftime("%B %d, %Y")
+    month_year = datetime.now().strftime("%B %Y")
+    prompt = ARTICLE_PROMPT.format(
+        category=category,
+        sources=sources_str,
+        today=today,
+        month_year=month_year,
     )
-    response = model.generate_content(prompt)
+
+    log.info("  Calling Gemini API (with Google Search grounding)...")
+    # Google Search grounding ensures real-time news, not old training data
+    try:
+        grounding_tool = genai.protos.Tool(
+            google_search_retrieval=genai.protos.GoogleSearchRetrieval()
+        )
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            tools=[grounding_tool],
+            system_instruction=SYSTEM_PROMPT,
+        )
+        response = model.generate_content(prompt)
+    except Exception:
+        # Fallback without grounding if not supported
+        model = genai.GenerativeModel(
+            model_name="gemini-flash-latest",
+            system_instruction=SYSTEM_PROMPT,
+        )
+        response = model.generate_content(prompt)
     raw = response.text.strip()
     clean = re.sub(r"```(?:json)?\s*|\s*```", "", raw).strip()
 
