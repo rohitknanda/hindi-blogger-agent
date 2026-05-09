@@ -63,6 +63,7 @@ GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN", "")
 DRAFTS_DIR.mkdir(exist_ok=True)
 
 # ── Categories & Sources ──────────────────────────────────────────────────────
+# Strictly 3 niches only — no General Knowledge, no news/politics
 CATEGORIES = ["science", "technology", "automobile"]
 
 SOURCES = {
@@ -85,27 +86,40 @@ stats = {"generated": 0, "published": 0, "errors": 0, "skipped": 0}
 genai.configure(api_key=GEMINI_API_KEY)
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are an expert Hindi content writer and SEO specialist writing for Indian readers.
-Write engaging, factual, deeply informative articles in Hindi (Devanagari script).
-IMPORTANT: Only write about news, discoveries, or launches from the LAST 30 DAYS.
-Never write about topics older than 1 month. If unsure, pick the most recent event.
-Professional tone. Return ONLY raw JSON — no markdown, no backticks, no extra text."""
+SYSTEM_PROMPT = """You are Rohit Kumar, an expert Hindi science journalist and SEO specialist at Vigyan Ki Duniya.
+Write in a warm, conversational, human voice — NOT like AI. Add personal observations, real-world analogies, and unique Indian perspective.
+STRICT RULES:
+1. Only cover: Science, Technology, Automobile — NO politics, NO LPG rules, NO general utility content
+2. Only write about events from the LAST 30 DAYS — never older topics
+3. Write like a real journalist: include surprising facts, emotional hooks, India-specific impact
+4. Vary sentence length — mix short punchy sentences with longer explanations
+5. Add rhetorical questions to engage readers
+6. Never sound like a template or AI — be original and specific
+7. Return ONLY raw JSON — no markdown, no backticks, no extra text"""
 
 ARTICLE_PROMPT = """Today's date is {today}. Write a comprehensive SEO-optimised Hindi blog article
 about a RECENT trending development in {category} from the LAST 30 DAYS ONLY.
 Use reputed sources: {sources}.
 STRICT RULE: The topic MUST be from {month_year} or at most one month before. No older news.
+WRITING STYLE:
+- Start with a relatable story, surprising fact, or thought-provoking question
+- Use "आप" and "हम" to directly address Indian readers
+- Include at least 2 India-specific implications (ISRO, Indian scientists, Indian consumers)
+- Add one expert quote or research citation
+- Vary tone: explain technical terms simply using everyday analogies
+- End with a strong CTA question that invites comments
+- Do NOT write about: politics, government schemes, LPG prices, daily news, or non-science topics
 
 Return ONLY this JSON (no markdown, no code fences):
 {{
-  "title": "Hindi title under 65 chars — emotional, curiosity-driven, with main SEO keyword",
+  "title": "Hindi title under 65 chars — use power words like 'खुलासा', 'चौंकाने वाला', 'पहली बार', 'क्रांति'. Must include main SEO keyword and create curiosity.",
   "english_title": "4-6 lowercase English words with hyphens for URL slug",
   "meta_description": "Hindi meta description under 150 chars",
   "focus_keyword": "Primary Hindi SEO keyword",
   "keywords": ["kw1","kw2","kw3","kw4","kw5","kw6","kw7"],
   "highlights": ["Key fact 1 in Hindi (under 15 words)", "Key fact 2", "Key fact 3", "Key fact 4", "Key fact 5"],
   "faq": [{{"q": "Hindi question about the topic?", "a": "Detailed Hindi answer in 2-3 sentences."}}, {{"q": "Second common question?", "a": "Answer."}}, {{"q": "Third question?", "a": "Answer."}}, {{"q": "Fourth question?", "a": "Answer."}}],
-  "article": "Full Hindi article. Use ## for H2 headings, ### for H3. Minimum 900 words. Include facts, data, expert opinions, India angle, strong conclusion.",
+  "article": "Full Hindi article. Use ## for H2 headings, ### for H3. MINIMUM 1200 words. Structure: 1) Hook paragraph with story/surprising fact, 2) Background/what is this, 3) The main discovery/news with data, 4) Expert opinions, 5) India angle and impact, 6) Future implications, 7) Strong conclusion with CTA. Add real statistics, research citations, and analogies. Sound like a human expert, not AI.",
   "image_prompt": "Photorealistic 16:9 scene description in English. Max 100 words.",
   "sources": ["Source Name: Article headline"],
   "tags": ["tag1","tag2","tag3","tag4","tag5"],
@@ -151,12 +165,36 @@ def generate_article(category: str) -> dict:
     clean = re.sub(r"```(?:json)?\s*|\s*```", "", raw).strip()
 
     try:
-        return json.loads(clean)
+        article = json.loads(clean)
     except json.JSONDecodeError:
         match = re.search(r"\{[\s\S]*\}", clean)
         if match:
-            return json.loads(match.group())
-        raise ValueError(f"JSON parse failed. Raw:\n{clean[:300]}")
+            article = json.loads(match.group())
+        else:
+            raise ValueError(f"JSON parse failed. Raw:\n{clean[:300]}")
+
+    # Quality gate — reject off-topic or thin content
+    banned_topics = ["lpg", "gas cylinder", "iran", "conflict", "war", "scheme",
+                     "yojana", "election", "political", "government scheme"]
+    title_lower = article.get("title", "").lower()
+    category    = article.get("category", "")
+
+    for banned in banned_topics:
+        if banned in title_lower:
+            log.warning(f"  Off-topic detected ('{banned}') — skipping")
+            raise ValueError(f"Off-topic content detected: {article.get('title', '')}")
+
+    if category not in ["science", "technology", "automobile"]:
+        log.warning(f"  Wrong category '{category}' — setting to science")
+        article["category"] = "science"
+
+    word_count = len(article.get("article", "").split())
+    if word_count < 600:
+        log.warning(f"  Thin content: only {word_count} words — retrying...")
+        raise ValueError(f"Thin content: {word_count} words (minimum 600)")
+
+    log.info(f"  Word count: {word_count} words ✓")
+    return article
 
 
 # ── Image URL (Pollinations.ai — free) ────────────────────────────────────────
@@ -608,7 +646,17 @@ def run_cycle() -> bool:
     try:
         # Step 1 — Generate article
         log.info("[1/3] Generating Hindi article...")
-        article = generate_article(category)
+        article = None
+        for attempt in range(1, 4):  # Up to 3 attempts
+            try:
+                article = generate_article(category)
+                break
+            except ValueError as ve:
+                log.warning(f"  Attempt {attempt}/3 failed: {ve}")
+                if attempt == 3:
+                    raise
+        if not article:
+            raise ValueError("All 3 generation attempts failed")
         log.info(f"  Title     : {article.get('title', '')[:55]}")
         log.info(f"  Eng slug  : {article.get('english_title', '')}")
         log.info(f"  Focus KW  : {article.get('focus_keyword', '')}")
