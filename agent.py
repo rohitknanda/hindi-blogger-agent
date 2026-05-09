@@ -149,6 +149,112 @@ def make_slug(text: str) -> str:
     return slug.strip("-")[:60]
 
 
+
+# ── Internal Linking ─────────────────────────────────────────────────────────
+def fetch_existing_posts(max_posts: int = 30) -> list:
+    """Fetch recent post titles + URLs from Blogger or WordPress."""
+    posts = []
+    try:
+        if PLATFORM == "blogger" and BLOG_ID:
+            token = get_blogger_token()
+            r = requests.get(
+                f"https://www.googleapis.com/blogger/v3/blogs/{BLOG_ID}/posts",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"maxResults": max_posts, "fields": "items(title,url)"},
+                timeout=15,
+            )
+            if r.ok:
+                for item in r.json().get("items", []):
+                    posts.append({
+                        "title": item.get("title", ""),
+                        "url":   item.get("url", ""),
+                    })
+
+        elif PLATFORM == "wordpress" and WP_URL:
+            auth = (WP_USERNAME, WP_APP_PASSWORD)
+            r = requests.get(
+                f"{WP_URL}/wp-json/wp/v2/posts",
+                auth=auth,
+                params={"per_page": max_posts, "_fields": "title,link"},
+                timeout=15,
+            )
+            if r.ok:
+                for item in r.json():
+                    posts.append({
+                        "title": item.get("title", {}).get("rendered", ""),
+                        "url":   item.get("link", ""),
+                    })
+    except Exception as e:
+        log.warning(f"  Internal linking: fetch failed — {e}")
+
+    log.info(f"  Fetched {len(posts)} existing posts for internal linking")
+    return posts
+
+
+def add_internal_links(html: str, article: dict, existing_posts: list) -> str:
+    """
+    Add up to 4 internal links in article HTML.
+    Matches article keywords against existing post titles.
+    Each keyword linked only once.
+    """
+    if not existing_posts:
+        return html
+
+    current_title = article.get("title", "").lower()
+    keywords = [k.strip().lower() for k in article.get("keywords", [])]
+    links_added = 0
+    max_links = 4
+
+    for post in existing_posts:
+        if links_added >= max_links:
+            break
+
+        post_title = post.get("title", "").strip()
+        post_url   = post.get("url", "").strip()
+
+        if not post_title or not post_url:
+            continue
+
+        # Do not link to current article
+        if post_title.lower() == current_title:
+            continue
+
+        # Find matching keyword
+        match_word = None
+        for kw in keywords:
+            if len(kw) < 4:
+                continue
+            if kw in post_title.lower() or post_title.lower() in kw:
+                match_word = kw
+                break
+
+        if not match_word:
+            continue
+
+        # Find first occurrence in HTML (case-insensitive, not already linked)
+        lower_html = html.lower()
+        idx = lower_html.find(match_word)
+        if idx == -1:
+            continue
+
+        # Skip if already inside an anchor tag
+        before = html[:idx]
+        if before.count("<a ") > before.count("</a>"):
+            continue
+
+        original = html[idx: idx + len(match_word)]
+        link_tag = (
+            f'<a href="{post_url}"' +
+            f' style="color:#3b5bdb;text-decoration:underline"' +
+            f' title="{post_title}">{original}</a>'
+        )
+        html = html[:idx] + link_tag + html[idx + len(match_word):]
+        links_added += 1
+        log.info(f"  Linked '{match_word}' → {post_url[:55]}...")
+
+    log.info(f"  Internal links added: {links_added}")
+    return html
+
 # ── HTML Formatter ────────────────────────────────────────────────────────────
 def format_html(article: dict, image_url: str) -> str:
     body = article.get("article", "")
@@ -389,6 +495,11 @@ def run_cycle() -> bool:
         if AUTO_PUBLISH:
             log.info(f"[3/3] Publishing to {PLATFORM.upper()}...")
             html = format_html(article, image_url)
+
+            # Internal linking
+            log.info("  Fetching posts for internal linking...")
+            existing = fetch_existing_posts()
+            html = add_internal_links(html, article, existing)
 
             if PLATFORM == "wordpress" and WP_URL and WP_USERNAME and WP_APP_PASSWORD:
                 url = publish_to_wordpress(article, html)
