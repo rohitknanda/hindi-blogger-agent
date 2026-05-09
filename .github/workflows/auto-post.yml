@@ -1,0 +1,53 @@
+name: Hindi Auto-Blogger
+
+on:
+  schedule:
+    - cron: "0 2,8,14,20 * * *"
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "Category (empty = auto)"
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - "science"
+          - "technology"
+          - "automobile"
+
+jobs:
+  post-article:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run content cycle
+        env:
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+          PLATFORM:             ${{ secrets.PLATFORM }}
+          WP_URL:               ${{ secrets.WP_URL }}
+          WP_USERNAME:          ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD:      ${{ secrets.WP_APP_PASSWORD }}
+          BLOG_ID:              ${{ secrets.BLOG_ID }}
+          GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          AUTO_PUBLISH:         "true"
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.category }}" ]; then
+            ARGS="--category ${{ github.event.inputs.category }}"
+          fi
+          python run_once.py $ARGS
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ github.run_number }}
+          path: agent.log
+          retention-days: 14
