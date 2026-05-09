@@ -98,11 +98,13 @@ STRICT RULE: The topic MUST be from {month_year} or at most one month before. No
 
 Return ONLY this JSON (no markdown, no code fences):
 {{
-  "title": "Hindi title with primary SEO keyword",
+  "title": "Hindi title under 65 chars — emotional, curiosity-driven, with main SEO keyword",
   "english_title": "4-6 lowercase English words with hyphens for URL slug",
   "meta_description": "Hindi meta description under 150 chars",
   "focus_keyword": "Primary Hindi SEO keyword",
   "keywords": ["kw1","kw2","kw3","kw4","kw5","kw6","kw7"],
+  "highlights": ["Key fact 1 in Hindi (under 15 words)", "Key fact 2", "Key fact 3", "Key fact 4", "Key fact 5"],
+  "faq": [{"q": "Hindi question about the topic?", "a": "Detailed Hindi answer in 2-3 sentences."}, {"q": "Second common question?", "a": "Answer."}, {"q": "Third question?", "a": "Answer."}, {"q": "Fourth question?", "a": "Answer."}],
   "article": "Full Hindi article. Use ## for H2 headings, ### for H3. Minimum 900 words. Include facts, data, expert opinions, India angle, strong conclusion.",
   "image_prompt": "Photorealistic 16:9 scene description in English. Max 100 words.",
   "sources": ["Source Name: Article headline"],
@@ -163,7 +165,7 @@ def get_image_url(prompt: str) -> str:
     seed = int(time.time()) % 99999
     return (
         f"https://image.pollinations.ai/prompt/{safe}"
-        f"?width=1024&height=576&model=flux&nologo=true&seed={seed}"
+        f"?width=1280&height=720&model=flux&nologo=true&seed={seed}&format=webp"
     )
 
 
@@ -304,12 +306,77 @@ def format_html(article: dict, image_url: str) -> str:
 
     title     = article.get("title", "")
     meta_desc = article.get("meta_description", "")[:150]
-    excerpt   = article.get("excerpt", "")
+    excerpt    = article.get("excerpt", "")
+    highlights = article.get("highlights", [])
+    faq_items  = article.get("faq", [])
+    category   = article.get("category", "science")
+
+    # Highlight box — shown after first paragraph
+    if highlights:
+        hl_items = "".join(
+            f'<li style="padding:5px 0;border-bottom:1px solid #e8f0fe;font-size:14px;color:#222">'
+            f'<span style="color:#3b5bdb;margin-right:8px">&#9658;</span>{h}</li>'
+            for h in highlights[:5]
+        )
+        highlight_box = (
+            '<div style="background:#f0f4ff;border:1.5px solid #3b5bdb;border-radius:10px;'
+            'padding:16px 20px;margin:20px 0;font-family:Arial,sans-serif">' +
+            '<div style="font-size:15px;font-weight:700;color:#3b5bdb;margin-bottom:10px">'
+            '&#128161; मुख्य बातें (Key Highlights)</div>' +
+            f'<ul style="list-style:none;margin:0;padding:0">{hl_items}</ul>' +
+            '</div>'
+        )
+    else:
+        highlight_box = ""
 
     excerpt_html = (
         '<p style="font-style:italic;color:#555;border-left:3px solid #3b5bdb;'
         f'padding-left:12px;margin-top:24px">{excerpt}</p>'
     ) if excerpt else ""
+
+    # FAQ section HTML
+    if faq_items:
+        faq_rows = ""
+        for item in faq_items[:5]:
+            q = item.get("q", "")
+            a = item.get("a", "")
+            if q and a:
+                faq_rows += (
+                    '<div style="border-bottom:1px solid #e0e0e0;padding:14px 0">'
+                    f'<div style="font-weight:700;font-size:15px;color:#1a1a2e;margin-bottom:6px">'
+                    f'&#10067; {q}</div>'
+                    f'<div style="font-size:14px;color:#444;line-height:1.8">{a}</div>'
+                    '</div>'
+                )
+        faq_html = (
+            '<div style="background:#fff;border:1.5px solid #3b5bdb;border-radius:10px;'
+            'padding:20px 22px;margin-top:28px;font-family:Arial,sans-serif">'
+            '<div style="font-size:17px;font-weight:700;color:#3b5bdb;margin-bottom:4px">'
+            '&#10067; अक्सर पूछे जाने वाले सवाल (FAQ)</div>'
+            f'{faq_rows}'
+            '</div>'
+        )
+        # FAQ JSON-LD schema for Google rich results
+        faq_schema = json.dumps({
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+                {
+                    "@type": "Question",
+                    "name": item.get("q", ""),
+                    "acceptedAnswer": {
+                        "@type": "Answer",
+                        "text": item.get("a", "")
+                    }
+                }
+                for item in faq_items[:5] if item.get("q") and item.get("a")
+            ]
+        }, ensure_ascii=False)
+    else:
+        faq_html = ""
+        faq_schema = ""
+
+    bio_html = ""
 
     # JSON-LD schema — Google reads this directly (more reliable than meta tags)
     schema = json.dumps({
@@ -329,10 +396,14 @@ def format_html(article: dict, image_url: str) -> str:
         f'<img src="{image_url}" alt="{title}" '
         f'style="width:100%;border-radius:10px;margin-bottom:22px;display:block" '
         f'loading="lazy">\n'
+        f'{highlight_box}\n'
         f'<p style="font-size:1.05em;line-height:1.9">{body}</p>\n'
         f'{excerpt_html}\n'
+        f'{faq_html}\n'
         f'</article>'
     )
+    # Prepend FAQ schema if available
+    + (f'<script type="application/ld+json">\n{faq_schema}\n</script>\n' if faq_schema else '')
 
 
 # ── WordPress Publisher ───────────────────────────────────────────────────────
