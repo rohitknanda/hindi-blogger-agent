@@ -403,7 +403,7 @@ def publish_to_blogger(article: dict, html: str) -> str:
         if len(raw_desc) > 150 else raw_desc
     )
 
-    # Step 1: Create post with English slug title → proper URL
+    # ── STEP 1: Create with English slug title → proper URL ───────────────────
     create_title = slug if slug else eng_title if eng_title else hindi_title
     r = requests.post(
         f"https://www.googleapis.com/blogger/v3/blogs/{BLOG_ID}/posts/",
@@ -418,34 +418,65 @@ def publish_to_blogger(article: dict, html: str) -> str:
     r.raise_for_status()
     post_id  = r.json().get("id", "")
     post_url = r.json().get("url", "Published")
-    log.info(f"  Post ID : {post_id}")
+    log.info(f"  Post ID  : {post_id}")
+    log.info(f"  URL      : {post_url}")
 
-    # Step 2: GET full post → update title + location → PUT back
-    if post_id:
+    if not post_id:
+        return post_url
+
+    base_url = f"https://www.googleapis.com/blogger/v3/blogs/{BLOG_ID}/posts/{post_id}"
+
+    # ── STEP 2: PATCH title + location (separate from search desc) ────────────
+    try:
+        p1 = requests.patch(
+            base_url, headers=hdr,
+            json={
+                "title": hindi_title,
+                "location": {"name": "India", "lat": 20.5937, "lng": 78.9629, "span": "30.0 50.0"},
+            },
+            timeout=30,
+        )
+        if p1.ok:
+            post_url = p1.json().get("url", post_url)
+            log.info(f"  Title    : '{hindi_title[:50]}' ✓")
+            log.info(f"  Location : India ✓")
+        else:
+            log.warning(f"  Title/location PATCH: {p1.status_code}")
+    except Exception as e:
+        log.warning(f"  Title/location error: {e}")
+
+    # ── STEP 3: Dedicated PATCH for Search Description only ───────────────────
+    # Must be a separate call — combining with other fields causes Blogger to ignore it
+    if meta_desc:
         try:
-            get_r = requests.get(
-                f"https://www.googleapis.com/blogger/v3/blogs/{BLOG_ID}/posts/{post_id}",
-                headers=hdr, timeout=30,
+            # Try format 1: searchDescription key
+            p2 = requests.patch(
+                base_url, headers=hdr,
+                json={"customMetaData": json.dumps({"searchDescription": meta_desc})},
+                timeout=30,
             )
-            if get_r.ok:
-                post_data = get_r.json()
-                post_data["title"]    = hindi_title
-                post_data["location"] = {
-                    "name": "India", "lat": 20.5937, "lng": 78.9629, "span": "30.0 50.0"
-                }
-                put_r = requests.put(
-                    f"https://www.googleapis.com/blogger/v3/blogs/{BLOG_ID}/posts/{post_id}",
-                    headers=hdr, json=post_data, timeout=30,
-                )
-                if put_r.ok:
-                    post_url = put_r.json().get("url", post_url)
-                    log.info(f"  Title    : '{hindi_title[:50]}' ✓")
-                    log.info(f"  Location : India ✓")
-                    log.info(f"  SEO      : JSON-LD schema in HTML ✓")
+            if p2.ok:
+                # Verify it was saved
+                verify = requests.get(base_url, headers=hdr, timeout=15)
+                if verify.ok:
+                    saved = verify.json().get("customMetaData", "")
+                    if meta_desc[:20] in saved:
+                        log.info(f"  Search Desc: SET ✓ — '{meta_desc[:55]}'")
+                    else:
+                        # Try format 2: direct string value
+                        p3 = requests.patch(
+                            base_url, headers=hdr,
+                            json={"customMetaData": meta_desc},
+                            timeout=30,
+                        )
+                        log.info(f"  Search Desc: format2 attempt → {p3.status_code}")
+            else:
+                log.warning(f"  Search Desc PATCH: {p2.status_code} — {p2.text[:80]}")
         except Exception as e:
-            log.warning(f"  Update error: {e}")
+            log.warning(f"  Search Desc error: {e}")
 
     log.info(f"  Slug     : {slug}")
+    log.info(f"  Meta desc: '{meta_desc[:55]}'")
     return post_url
 
 
