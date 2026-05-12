@@ -406,6 +406,19 @@ def add_internal_links(html, article, existing_posts):
     return html
 
 # ── HTML Formatter ────────────────────────────────────────────────────────────
+def _clean(text: str) -> str:
+    """Sanitize text for JSON-LD — removes chars that break JSON parsing."""
+    if not text:
+        return ""
+    return (str(text)
+            .replace("\\", "")
+            .replace('"', "'")
+            .replace("\n", " ")
+            .replace("\r", "")
+            .replace("\t", " ")
+            .strip())
+
+
 def format_html(article: dict, image_url: str) -> str:
     body = article.get("article", "")
     # Strip author signatures Gemini sometimes adds
@@ -439,18 +452,24 @@ def format_html(article: dict, image_url: str) -> str:
 
     # Highlight box — shown after first paragraph
     if highlights:
-        hl_items = "".join(
-            f'<li style="padding:5px 0;border-bottom:1px solid #e8f0fe;font-size:14px;color:#222">'
-            f'<span style="color:#3b5bdb;margin-right:8px">&#9658;</span>{h}</li>'
-            for h in highlights[:5]
-        )
+        hl_items = ""
+        for h in highlights[:5]:
+            h_clean = str(h).replace('"', "'").replace("<", "").replace(">", "")
+            hl_items += (
+                '<li style="padding:6px 0;border-bottom:1px solid #e8f0fe;'
+                'font-size:14px;color:#222;list-style:none">'
+                '<span style="color:#3b5bdb;margin-right:8px;font-weight:700">&#9658;</span>'
+                + h_clean +
+                '</li>'
+            )
         highlight_box = (
-            '<div style="background:#f0f4ff;border:1.5px solid #3b5bdb;border-radius:10px;'
-            'padding:16px 20px;margin:20px 0;font-family:Arial,sans-serif">' +
+            '<div style="background:#f0f4ff;border:1.5px solid #3b5bdb;'
+            'border-radius:10px;padding:16px 20px;margin:20px 0;font-family:Arial,sans-serif">'
             '<div style="font-size:15px;font-weight:700;color:#3b5bdb;margin-bottom:10px">'
-            '&#128161; मुख्य बातें (Key Highlights)</div>' +
-            f'<ul style="list-style:none;margin:0;padding:0">{hl_items}</ul>' +
-            '</div>'
+            '&#128161; मुख्य बातें (Key Highlights)</div>'
+            '<ul style="list-style:none;margin:0;padding:0">'
+            + hl_items +
+            '</ul></div>'
         )
     else:
         highlight_box = ""
@@ -506,18 +525,6 @@ def format_html(article: dict, image_url: str) -> str:
     bio_html = ""
 
     # JSON-LD schema — sanitize values to prevent JSON parse errors
-    def _clean(text):
-        """Remove chars that break JSON-LD parsing."""
-        if not text:
-            return ""
-        return (str(text)
-                .replace("\\", "")
-                .replace('"', "'")
-                .replace("\n", " ")
-                .replace("\r", "")
-                .replace("\t", " ")
-                .strip())
-
     schema_data = {
         "@context": "https://schema.org",
         "@type": "Article",
