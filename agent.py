@@ -245,6 +245,89 @@ def fetch_existing_posts(max_posts=100):
     return posts
 
 
+def get_recent_topics(days: int = 7) -> list:
+    """Fetch titles of posts published in last N days to avoid duplicates."""
+    topics = []
+    try:
+        if PLATFORM == "blogger" and BLOG_ID:
+            token = get_blogger_token()
+            from datetime import timedelta
+            start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00+05:30")
+            r = requests.get(
+                f"https://www.googleapis.com/blogger/v3/blogs/{BLOG_ID}/posts",
+                headers={"Authorization": f"Bearer {token}"},
+                params={
+                    "maxResults": 100,
+                    "fields": "items(title,published)",
+                    "startDate": start_date,
+                },
+                timeout=15,
+            )
+            if r.ok:
+                for item in r.json().get("items", []):
+                    topics.append(item.get("title", "").lower())
+        elif PLATFORM == "wordpress" and WP_URL:
+            from datetime import timedelta
+            after = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00")
+            r = requests.get(
+                f"{WP_URL}/wp-json/wp/v2/posts",
+                auth=(WP_USERNAME, WP_APP_PASSWORD),
+                params={"per_page": 100, "after": after, "_fields": "title"},
+                timeout=15,
+            )
+            if r.ok:
+                for item in r.json():
+                    topics.append(item.get("title", {}).get("rendered", "").lower())
+    except Exception as e:
+        log.warning(f"  Recent topics fetch failed: {e}")
+    log.info(f"  Fetched {len(topics)} recent topics for duplicate check")
+    return topics
+
+
+def is_duplicate_topic(article: dict, recent_topics: list) -> bool:
+    """Check if article topic is too similar to a recently published post."""
+    if not recent_topics:
+        return False
+
+    new_title = article.get("title", "").lower()
+    new_keywords = [k.lower() for k in article.get("keywords", [])]
+
+    import re as _re
+    stop = {"में", "की", "का", "के", "है", "और", "को", "से", "पर", "यह",
+            "वह", "एक", "भी", "कि", "the", "a", "an", "of", "in", "to",
+            "भारत", "india", "hindi", "2026", "2025", "नया", "नई", "के", "लिए"}
+
+    def extract_words(text):
+        # Split on spaces and common punctuation
+        parts = text.replace(",", " ").replace("।", " ").replace("?", " ")
+        parts = parts.replace("!", " ").replace(":", " ").replace(";", " ")
+        words = parts.split()
+        return {w.strip() for w in words if len(w.strip()) >= 3 and w.lower() not in stop}
+
+    new_words = extract_words(new_title)
+    # Add key words from keywords list
+    for kw in new_keywords[:3]:
+        new_words.update(extract_words(kw))
+
+    for recent in recent_topics:
+        recent_words = extract_words(recent)
+        if not recent_words:
+            continue
+        # Calculate overlap score
+        overlap = len(new_words & recent_words)
+        min_size = min(len(new_words), len(recent_words))
+        if min_size == 0:
+            continue
+        similarity = overlap / min_size
+        if similarity >= 0.5:  # 50% word overlap = duplicate
+            log.warning(f"  Duplicate detected! ({similarity:.0%} similar)")
+            log.warning(f"    New   : {article.get('title', '')[:55]}")
+            log.warning(f"    Recent: {recent[:55]}")
+            return True
+
+    return False
+
+
 def add_internal_links(html, article, existing_posts):
     if not existing_posts:
         return html
@@ -638,7 +721,25 @@ def save_draft(article: dict, image_url: str):
 # ── Main Cycle ────────────────────────────────────────────────────────────────
 def run_cycle() -> bool:
     global cat_index
-    category = CATEGORIES[cat_index % len(CATEGORIES)]
+
+    # Persistent category rotation across GitHub Actions runs
+    # Priority: env var CATEGORY → GITHUB_RUN_NUMBER → time-based rotation
+    forced_cat = os.getenv("CATEGORY", "").strip().lower()
+    if forced_cat in CATEGORIES:
+        category = forced_cat
+        log.info(f"  Category forced by env: {category}")
+    else:
+        # Use GitHub run number if available (increments each run)
+        run_num = int(os.getenv("GITHUB_RUN_NUMBER", "0"))
+        if run_num > 0:
+            category = CATEGORIES[run_num % len(CATEGORIES)]
+            log.info(f"  Category from run #{run_num}: {category}")
+        else:
+            # Fallback: time-based — changes every 6 hours
+            hour_block = (datetime.now().hour // 6) + (datetime.now().day * 4)
+            category = CATEGORIES[hour_block % len(CATEGORIES)]
+            log.info(f"  Category from time-block: {category}")
+
     cat_index += 1
 
     sep = "=" * 55
@@ -653,17 +754,30 @@ def run_cycle() -> bool:
     try:
         # Step 1 — Generate article
         log.info("[1/3] Generating Hindi article...")
+        # Fetch recent topics for duplicate detection
+        log.info("  Fetching recent posts for duplicate check...")
+        recent_topics = get_recent_topics(days=7)
+
         article = None
-        for attempt in range(1, 4):  # Up to 3 attempts
+        for attempt in range(1, 5):  # Up to 4 attempts
             try:
                 article = generate_article(category)
+                # Check for duplicate topic
+                if is_duplicate_topic(article, recent_topics):
+                    log.warning(f"  Attempt {attempt}/4: Duplicate topic — retrying...")
+                    if attempt == 4:
+                        log.warning("  All attempts produced duplicates — skipping cycle")
+                        stats["skipped"] += 1
+                        return True
+                    article = None
+                    continue
                 break
             except ValueError as ve:
-                log.warning(f"  Attempt {attempt}/3 failed: {ve}")
-                if attempt == 3:
+                log.warning(f"  Attempt {attempt}/4 failed: {ve}")
+                if attempt == 4:
                     raise
         if not article:
-            raise ValueError("All 3 generation attempts failed")
+            raise ValueError("All 4 generation attempts failed")
         log.info(f"  Title     : {article.get('title', '')[:55]}")
         log.info(f"  Eng slug  : {article.get('english_title', '')}")
         log.info(f"  Focus KW  : {article.get('focus_keyword', '')}")
