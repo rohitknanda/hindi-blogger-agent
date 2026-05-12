@@ -489,31 +489,62 @@ def format_html(article: dict, image_url: str) -> str:
             "mainEntity": [
                 {
                     "@type": "Question",
-                    "name": item.get("q", ""),
+                    "name": _clean(item.get("q", ""))[:200],
                     "acceptedAnswer": {
                         "@type": "Answer",
-                        "text": item.get("a", "")
+                        "text": _clean(item.get("a", ""))[:500],
                     }
                 }
-                for item in faq_items[:5] if item.get("q") and item.get("a")
+                for item in faq_items[:5]
+                if item.get("q") and item.get("a")
             ]
-        }, ensure_ascii=False)
+        }, ensure_ascii=False, separators=(',', ':'))
     else:
         faq_html = ""
         faq_schema = ""
 
     bio_html = ""
 
-    # JSON-LD schema — Google reads this directly (more reliable than meta tags)
-    schema = json.dumps({
+    # JSON-LD schema — sanitize values to prevent JSON parse errors
+    def _clean(text):
+        """Remove chars that break JSON-LD parsing."""
+        if not text:
+            return ""
+        return (str(text)
+                .replace("\\", "")
+                .replace('"', "'")
+                .replace("\n", " ")
+                .replace("\r", "")
+                .replace("\t", " ")
+                .strip())
+
+    schema_data = {
         "@context": "https://schema.org",
         "@type": "Article",
-        "headline": title,
-        "description": meta_desc,
+        "headline": _clean(title)[:110],
+        "description": _clean(meta_desc)[:150],
         "inLanguage": "hi",
-        "image": image_url,
-        "author": {"@type": "Organization", "name": "Hindi Auto Blogger"},
-    }, ensure_ascii=False)
+        "image": {
+            "@type": "ImageObject",
+            "url": image_url,
+            "width": 1280,
+            "height": 720,
+        },
+        "author": {
+            "@type": "Person",
+            "name": "Vigyan Ki Duniya",
+            "url": "https://www.vigyankiduniya.com/p/about-us.html",
+        },
+        "publisher": {
+            "@type": "Organization",
+            "name": "Vigyan Ki Duniya",
+            "url": "https://www.vigyankiduniya.com",
+        },
+        "datePublished": datetime.now().strftime("%Y-%m-%d"),
+        "dateModified": datetime.now().strftime("%Y-%m-%d"),
+        "mainEntityOfPage": {"@type": "WebPage"},
+    }
+    schema = json.dumps(schema_data, ensure_ascii=False, separators=(',', ':'))
 
     return (
         f'<script type="application/ld+json">\n{schema}\n</script>\n'
