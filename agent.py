@@ -517,7 +517,7 @@ def format_html(article: dict, image_url: str) -> str:
                 for item in faq_items[:5]
                 if item.get("q") and item.get("a")
             ]
-        }, ensure_ascii=False, separators=(',', ':'))
+        }, ensure_ascii=True, separators=(',', ':'))
     else:
         faq_html = ""
         faq_schema = ""
@@ -551,7 +551,18 @@ def format_html(article: dict, image_url: str) -> str:
         "dateModified": datetime.now().strftime("%Y-%m-%d"),
         "mainEntityOfPage": {"@type": "WebPage"},
     }
-    schema = json.dumps(schema_data, ensure_ascii=False, separators=(',', ':'))
+    # Use ensure_ascii=True so no Unicode chars appear raw in JSON-LD
+    # This prevents Blogger from mangling Hindi chars in the script tag
+    schema = json.dumps(schema_data, ensure_ascii=True, separators=(',', ':'))
+
+    # Split body at first paragraph for <!--more--> tag
+    if '</p>' in body:
+        split_at = body.find('</p>') + 4
+        intro = body[:split_at]
+        rest  = body[split_at:]
+    else:
+        intro = body[:400]
+        rest  = body[400:]
 
     return (
         f'<script type="application/ld+json">\n{schema}\n</script>\n'
@@ -560,10 +571,10 @@ def format_html(article: dict, image_url: str) -> str:
         f'<img src="{image_url}" alt="{title}" '
         f'style="width:100%;border-radius:10px;margin-bottom:22px;display:block" '
         f'loading="lazy">\n'
-        f'<p style="font-size:1.05em;line-height:1.9">{body[:body.find("</p>") + 4] if "</p>" in body else body[:400]}</p>\n'
+        f'<p style="font-size:1.05em;line-height:1.9">{intro}</p>\n'
         '<!--more-->\n'
         f'{highlight_box}\n'
-        f'<p style="font-size:1.05em;line-height:1.9">{body[body.find("</p>") + 4:] if "</p>" in body else body[400:]}</p>\n'
+        f'<p style="font-size:1.05em;line-height:1.9">{rest}</p>\n'
         f'{excerpt_html}\n'
         f'{faq_html}\n'
         f'</article>'
