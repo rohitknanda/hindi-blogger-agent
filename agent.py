@@ -502,8 +502,14 @@ def format_html(article: dict, image_url: str) -> str:
             '</div>'
         )
         # FAQ JSON-LD schema for Google rich results
-        faq_schema = json.dumps({
-            "@context": "https://schema.org",
+        faq_schema = ''  # Now included in @graph above
+    else:
+        faq_html = ""
+        faq_schema = ""
+
+    # Add FAQ node to @graph if available
+    if faq_items:
+        graph_nodes.append({
             "@type": "FAQPage",
             "mainEntity": [
                 {
@@ -512,48 +518,21 @@ def format_html(article: dict, image_url: str) -> str:
                     "acceptedAnswer": {
                         "@type": "Answer",
                         "text": _clean(item.get("a", ""))[:500],
-                    }
+                    },
                 }
                 for item in faq_items[:5]
                 if item.get("q") and item.get("a")
-            ]
-        }, ensure_ascii=True, separators=(',', ':'))
-    else:
-        faq_html = ""
-        faq_schema = ""
+            ],
+        })
+
+    # Build single combined JSON-LD schema
+    schema = json.dumps(
+        {"@context": "https://schema.org", "@graph": graph_nodes},
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
 
     bio_html = ""
-
-    # JSON-LD schema — sanitize values to prevent JSON parse errors
-    schema_data = {
-        "@context": "https://schema.org",
-        "@type": "Article",
-        "headline": _clean(title)[:110],
-        "description": _clean(meta_desc)[:150],
-        "inLanguage": "hi",
-        "image": {
-            "@type": "ImageObject",
-            "url": image_url,
-            "width": 1280,
-            "height": 720,
-        },
-        "author": {
-            "@type": "Person",
-            "name": "Vigyan Ki Duniya",
-            "url": "https://www.vigyankiduniya.com/p/about-us.html",
-        },
-        "publisher": {
-            "@type": "Organization",
-            "name": "Vigyan Ki Duniya",
-            "url": "https://www.vigyankiduniya.com",
-        },
-        "datePublished": datetime.now().strftime("%Y-%m-%d"),
-        "dateModified": datetime.now().strftime("%Y-%m-%d"),
-        "mainEntityOfPage": {"@type": "WebPage"},
-    }
-    # Use ensure_ascii=True so no Unicode chars appear raw in JSON-LD
-    # This prevents Blogger from mangling Hindi chars in the script tag
-    schema = json.dumps(schema_data, ensure_ascii=True, separators=(',', ':'))
 
     # Split body at first paragraph for <!--more--> tag
     if '</p>' in body:
@@ -580,7 +559,6 @@ def format_html(article: dict, image_url: str) -> str:
         f'</article>'
     )
     # Prepend FAQ schema if available
-    + (f'<script type="application/ld+json">\n{faq_schema}\n</script>\n' if faq_schema else '')
 
 
 # ── WordPress Publisher ───────────────────────────────────────────────────────
