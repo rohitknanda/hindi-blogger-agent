@@ -507,6 +507,23 @@ def format_html(article: dict, image_url: str) -> str:
         faq_html = ""
         faq_schema = ""
 
+    # Initialize @graph with Article node
+    graph_nodes = [
+        {
+            "@type": "Article",
+            "headline": _clean(title)[:110],
+            "description": _clean(meta_desc)[:150],
+            "inLanguage": "hi",
+            "image": {"@type": "ImageObject", "url": image_url, "width": 1280, "height": 720},
+            "author": {"@type": "Person", "name": "Vigyan Ki Duniya",
+                       "url": "https://www.vigyankiduniya.com/p/about-us.html"},
+            "publisher": {"@type": "Organization", "name": "Vigyan Ki Duniya",
+                          "url": "https://www.vigyankiduniya.com"},
+            "datePublished": datetime.now().strftime("%Y-%m-%d"),
+            "dateModified": datetime.now().strftime("%Y-%m-%d"),
+        }
+    ]
+
     # Add FAQ node to @graph if available
     if faq_items:
         graph_nodes.append({
