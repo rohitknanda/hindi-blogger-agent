@@ -2,8 +2,9 @@ name: Hindi Auto-Blogger
 
 on:
   schedule:
-    # Runs every hour — 24 articles/day
-    - cron: "0 * * * *"
+    # Runs every 2 hours — 12 articles/day (stays within Gemini free tier)
+    # Gemini free tier: 1500 requests/day on gemini-1.5-flash
+    - cron: "0 */2 * * *"
 
   # Manual trigger from GitHub Actions tab
   workflow_dispatch:
