@@ -142,25 +142,36 @@ def generate_article(category: str) -> dict:
         month_year=month_year,
     )
 
-    log.info("  Calling Gemini API (with Google Search grounding)...")
-    # Google Search grounding ensures real-time news, not old training data
-    try:
-        grounding_tool = genai.protos.Tool(
-            google_search_retrieval=genai.protos.GoogleSearchRetrieval()
-        )
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            tools=[grounding_tool],
-            system_instruction=SYSTEM_PROMPT,
-        )
-        response = model.generate_content(prompt)
-    except Exception:
-        # Fallback without grounding if not supported
-        model = genai.GenerativeModel(
-            model_name="gemini-flash-latest",
-            system_instruction=SYSTEM_PROMPT,
-        )
-        response = model.generate_content(prompt)
+    log.info("  Calling Gemini API...")
+    # Try models in order — fallback if quota exceeded
+    models_to_try = [
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-flash-latest",
+        "gemini-1.0-pro",
+    ]
+    response = None
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=SYSTEM_PROMPT,
+            )
+            response = model.generate_content(prompt)
+            log.info(f"  Model used: {model_name} ✓")
+            break
+        except Exception as e:
+            err_str = str(e).lower()
+            if "quota" in err_str or "429" in err_str or "resource_exhausted" in err_str:
+                log.warning(f"  {model_name} quota exceeded — trying next model...")
+                last_error = e
+                time.sleep(2)
+                continue
+            else:
+                raise  # Non-quota error — re-raise immediately
+    if response is None:
+        raise ValueError(f"All models quota exceeded. Last error: {last_error}")
     raw = response.text.strip()
     clean = re.sub(r"```(?:json)?\s*|\s*```", "", raw).strip()
 
