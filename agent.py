@@ -144,11 +144,12 @@ def generate_article(category: str) -> dict:
 
     log.info("  Calling Gemini API...")
     # Try models in order — fallback if quota exceeded
+    # Models confirmed working on google-generativeai package
     models_to_try = [
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-flash-latest",
-        "gemini-1.0-pro",
+        "gemini-flash-latest",        # working ✓
+        "gemini-2.0-flash-lite",      # free tier
+        "gemini-2.5-flash-lite",      # free tier
+        "gemini-1.0-pro",             # fallback
     ]
     response = None
     last_error = None
