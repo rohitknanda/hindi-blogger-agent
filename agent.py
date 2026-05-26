@@ -423,8 +423,10 @@ def add_internal_links(html, article, existing_posts):
     return html
 
 # ── Amazon Affiliate ─────────────────────────────────────────────────────────
-def build_amazon_box(products: list, amazon_tag: str) -> str:
+def build_amazon_box(products: list, amazon_tag: str = None) -> str:
     """Build an Amazon affiliate product recommendation box."""
+    if amazon_tag is None:
+        amazon_tag = os.getenv("AMAZON_TAG", "")
     if not products or not amazon_tag:
         return ""
 
@@ -573,7 +575,7 @@ def format_html(article: dict, image_url: str) -> str:
         faq_schema = ""
 
     # Amazon affiliate product box
-    amazon_box = build_amazon_box(amazon_products, AMAZON_TAG)
+    amazon_box = build_amazon_box(amazon_products)  # reads AMAZON_TAG from env
     if amazon_box:
         log.info(f"  Amazon box: {len(amazon_products)} products added ✓")
 
