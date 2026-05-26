@@ -126,7 +126,12 @@ Return ONLY this JSON (no markdown, no code fences):
   "category": "{category}",
   "read_time": "X मिनट",
   "trend_score": 90,
-  "excerpt": "2-sentence Hindi teaser for social sharing"
+  "excerpt": "2-sentence Hindi teaser for social sharing",
+  "amazon_products": [
+    {{"name": "Product name in Hindi (relevant to article topic)", "search": "English Amazon search query for this product", "reason": "1 line Hindi reason why reader should buy this"}},
+    {{"name": "Second relevant product", "search": "English Amazon search query", "reason": "Hindi reason"}},
+    {{"name": "Third relevant product", "search": "English Amazon search query", "reason": "Hindi reason"}}
+  ]
 }}"""
 
 
@@ -417,6 +422,53 @@ def add_internal_links(html, article, existing_posts):
     log.info(f"  Total internal links added: {links_added}")
     return html
 
+# ── Amazon Affiliate ─────────────────────────────────────────────────────────
+def build_amazon_box(products: list, amazon_tag: str) -> str:
+    """Build an Amazon affiliate product recommendation box."""
+    if not products or not amazon_tag:
+        return ""
+
+    items_html = ""
+    for p in products[:3]:
+        name   = _clean(p.get("name", ""))
+        search = p.get("search", "").strip()
+        reason = _clean(p.get("reason", ""))
+        if not name or not search:
+            continue
+        # Amazon search URL with affiliate tag
+        search_url = (
+            f"https://www.amazon.in/s?k={requests.utils.quote(search)}"
+            f"&tag={amazon_tag}&linkCode=ur2"
+        )
+        items_html += (
+            '<div style="display:flex;align-items:flex-start;gap:12px;'
+            'padding:10px 0;border-bottom:1px solid #e8edf5">'
+            '<div style="font-size:22px;flex-shrink:0">🛒</div>'
+            '<div style="flex:1">'
+            f'<div style="font-size:14px;font-weight:600;color:#1a1a2e;margin-bottom:3px">{name}</div>'
+            f'<div style="font-size:12px;color:#555;margin-bottom:6px">{reason}</div>'
+            f'<a href="{search_url}" target="_blank" rel="nofollow sponsored" '
+            f'style="display:inline-block;background:#FF9900;color:#fff;'
+            f'font-size:12px;font-weight:600;padding:5px 14px;border-radius:4px;'
+            f'text-decoration:none">Amazon पर देखें →</a>'
+            '</div></div>'
+        )
+
+    if not items_html:
+        return ""
+
+    return (
+        '<div style="background:#fff8f0;border:1.5px solid #FF9900;'
+        'border-radius:10px;padding:16px 20px;margin-top:28px;font-family:Arial,sans-serif">'
+        '<div style="font-size:15px;font-weight:700;color:#cc7700;margin-bottom:12px">'
+        '🛍️ इस विषय से जुड़े उत्पाद खरीदें (Amazon India)</div>'
+        + items_html +
+        '<div style="font-size:10px;color:#999;margin-top:10px">'
+        '* Affiliate links — आपको कोई extra charge नहीं, हमें थोड़ा commission मिलता है</div>'
+        '</div>'
+    )
+
+
 # ── HTML Formatter ────────────────────────────────────────────────────────────
 def _clean(text: str) -> str:
     """Sanitize text for JSON-LD — removes chars that break JSON parsing."""
@@ -461,6 +513,7 @@ def format_html(article: dict, image_url: str) -> str:
     highlights = article.get("highlights", [])
     faq_items  = article.get("faq", [])
     category   = article.get("category", "science")
+    amazon_products = article.get("amazon_products", [])
 
     # Highlight box — shown after first paragraph
     if highlights:
@@ -518,6 +571,11 @@ def format_html(article: dict, image_url: str) -> str:
     else:
         faq_html = ""
         faq_schema = ""
+
+    # Amazon affiliate product box
+    amazon_box = build_amazon_box(amazon_products, AMAZON_TAG)
+    if amazon_box:
+        log.info(f"  Amazon box: {len(amazon_products)} products added ✓")
 
     # Initialize @graph with Article node
     graph_nodes = [
@@ -585,6 +643,7 @@ def format_html(article: dict, image_url: str) -> str:
         f'<p style="font-size:1.05em;line-height:1.9">{rest}</p>\n'
         f'{excerpt_html}\n'
         f'{faq_html}\n'
+        f'{amazon_box}\n'
         f'</article>'
     )
     # Prepend FAQ schema if available
