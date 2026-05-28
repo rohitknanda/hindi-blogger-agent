@@ -423,6 +423,26 @@ def add_internal_links(html, article, existing_posts):
     return html
 
 # ── Amazon Affiliate ─────────────────────────────────────────────────────────
+# Fallback products by category — used when Gemini doesn't return amazon_products
+CATEGORY_PRODUCTS = {
+    "science": [
+        {"name": "टेलीस्कोप (Beginner Telescope)", "search": "telescope for beginners india", "reason": "घर से तारे और ग्रह देखें — अंतरिक्ष विज्ञान का असली अनुभव"},
+        {"name": "विज्ञान की किताबें (Hindi)", "search": "vigyan science books hindi", "reason": "हिंदी में विज्ञान की गहरी समझ पाएं"},
+        {"name": "Science Experiment Kit", "search": "science experiment kit for students india", "reason": "घर पर science experiments करें"},
+    ],
+    "technology": [
+        {"name": "Raspberry Pi (Mini Computer)", "search": "raspberry pi 4 india", "reason": "AI और coding सीखें — tech की दुनिया में कदम रखें"},
+        {"name": "Arduino Starter Kit", "search": "arduino starter kit india", "reason": "Electronics और robotics सीखें घर पर"},
+        {"name": "Tech Books (Programming)", "search": "python programming books hindi india", "reason": "Technology को professionally सीखें"},
+    ],
+    "automobile": [
+        {"name": "Car Dash Camera (Dashcam)", "search": "car dash camera india 4k", "reason": "सफर को सुरक्षित बनाएं — हर moment record करें"},
+        {"name": "EV Charging Cable", "search": "electric vehicle charging cable india", "reason": "Electric car चार्जिंग के लिए best cable"},
+        {"name": "Car Accessories Kit", "search": "car accessories kit india 2024", "reason": "अपनी गाड़ी को और बेहतर बनाएं"},
+    ],
+}
+
+
 def build_amazon_box(products: list, amazon_tag: str = None) -> str:
     """Build an Amazon affiliate product recommendation box."""
     if amazon_tag is None:
@@ -575,6 +595,10 @@ def format_html(article: dict, image_url: str) -> str:
         faq_schema = ""
 
     # Amazon affiliate product box
+    # Use Gemini products if available, else use category fallback
+    if not amazon_products:
+        amazon_products = CATEGORY_PRODUCTS.get(category, CATEGORY_PRODUCTS["science"])
+        log.info(f"  Amazon: using category fallback for '{category}'")
     amazon_box = build_amazon_box(amazon_products)  # reads AMAZON_TAG from env
     if amazon_box:
         log.info(f"  Amazon box: {len(amazon_products)} products added ✓")
