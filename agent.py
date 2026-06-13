@@ -22,6 +22,7 @@ from pathlib import Path
 
 import requests
 import google.generativeai as genai
+from google import genai as genai_client  # new SDK for Imagen 3
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
@@ -229,32 +230,25 @@ def get_image_pollinations(prompt: str) -> str:
 
 def get_image_imagen(prompt: str, slug: str) -> str:
     """
-    Generate image via Google Imagen 3 (paid — requires billing-enabled
-    GEMINI_API_KEY). Saves to a local file and uploads it to a free image
-    host (0x0.st) so Blogger/WordPress can use a public URL.
+    Generate image via Google Imagen 3 using the genai.Client (new SDK
+    interface). Requires a billing-enabled GEMINI_API_KEY.
+    Uploads result to a free image host (0x0.st) and returns its URL.
     Returns "" on any failure so caller can fall back to Pollinations.
     """
     try:
-        model = genai.GenerativeModel("imagen-3.0-generate-001")
-        result = model.generate_images(
+        client = genai_client.Client(api_key=GEMINI_API_KEY)
+        result = client.models.generate_images(
+            model="imagen-3.0-generate-002",
             prompt=prompt[:480],
-            number_of_images=1,
-            aspect_ratio="16:9",
+            config={"number_of_images": 1, "aspect_ratio": "16:9"},
         )
-        if not result or not getattr(result, "images", None):
+
+        if not result or not getattr(result, "generated_images", None):
             log.warning("  Imagen: no image returned")
             return ""
 
-        img = result.images[0]
-        img_bytes = img._pil_image_bytes if hasattr(img, "_pil_image_bytes") else None
-        if img_bytes is None:
-            # Fallback: use PIL image object directly
-            from io import BytesIO
-            buf = BytesIO()
-            img._pil_image.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
+        img_bytes = result.generated_images[0].image.image_bytes
 
-        # Upload to free temporary host so Blogger/WordPress can fetch it
         upload = requests.post(
             "https://0x0.st",
             files={"file": (f"{slug}.png", img_bytes, "image/png")},
