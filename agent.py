@@ -410,6 +410,17 @@ def is_duplicate_topic(article: dict, recent_topics: list) -> bool:
 def add_internal_links(html, article, existing_posts):
     if not existing_posts:
         return html
+
+    # Protect the <img ...> tag (and its alt/title attrs) from being
+    # modified — internal links must only land inside <p>/body text.
+    img_match = re.search(r"<img\b[^>]*>", html, flags=re.IGNORECASE)
+    if img_match:
+        placeholder = "@@IMG_TAG_PLACEHOLDER@@"
+        img_tag = img_match.group(0)
+        html = html.replace(img_tag, placeholder, 1)
+    else:
+        placeholder = None
+        img_tag = None
     current_title = article.get("title","").lower()
     keywords = [k.strip().lower() for k in article.get("keywords",[])]
     links_added = 0
@@ -482,6 +493,11 @@ def add_internal_links(html, article, existing_posts):
         log.info(f"  Linked: {match_word!r} → {post_url[:55]}")
 
     log.info(f"  Total internal links added: {links_added}")
+
+    # Restore the protected <img> tag
+    if placeholder and img_tag:
+        html = html.replace(placeholder, img_tag, 1)
+
     return html
 
 # ── Amazon Affiliate ─────────────────────────────────────────────────────────
