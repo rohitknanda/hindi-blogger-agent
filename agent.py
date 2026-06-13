@@ -215,13 +215,73 @@ def generate_article(category: str) -> dict:
 
 
 # ── Image URL (Pollinations.ai — free) ────────────────────────────────────────
-def get_image_url(prompt: str) -> str:
+def get_image_pollinations(prompt: str) -> str:
+    """Free image generation via Pollinations.ai — returns a direct URL."""
     safe = urllib.parse.quote(prompt[:200])
     seed = int(time.time()) % 99999
     return (
         f"https://image.pollinations.ai/prompt/{safe}"
         f"?width=1280&height=720&model=flux&nologo=true&seed={seed}&format=webp"
     )
+
+
+def get_image_imagen(prompt: str, slug: str) -> str:
+    """
+    Generate image via Google Imagen 3 (paid — requires billing-enabled
+    GEMINI_API_KEY). Saves to a local file and uploads it to a free image
+    host (0x0.st) so Blogger/WordPress can use a public URL.
+    Returns "" on any failure so caller can fall back to Pollinations.
+    """
+    try:
+        model = genai.GenerativeModel("imagen-3.0-generate-001")
+        result = model.generate_images(
+            prompt=prompt[:480],
+            number_of_images=1,
+            aspect_ratio="16:9",
+        )
+        if not result or not getattr(result, "images", None):
+            log.warning("  Imagen: no image returned")
+            return ""
+
+        img = result.images[0]
+        img_bytes = img._pil_image_bytes if hasattr(img, "_pil_image_bytes") else None
+        if img_bytes is None:
+            # Fallback: use PIL image object directly
+            from io import BytesIO
+            buf = BytesIO()
+            img._pil_image.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+
+        # Upload to free temporary host so Blogger/WordPress can fetch it
+        upload = requests.post(
+            "https://0x0.st",
+            files={"file": (f"{slug}.png", img_bytes, "image/png")},
+            timeout=60,
+        )
+        if upload.ok:
+            url = upload.text.strip()
+            log.info(f"  Imagen: image generated ✓ → {url[:60]}...")
+            return url
+        else:
+            log.warning(f"  Imagen: upload failed ({upload.status_code})")
+            return ""
+    except Exception as e:
+        log.warning(f"  Imagen failed: {e} — falling back to Pollinations")
+        return ""
+
+
+def get_image_url(prompt: str, slug: str = "") -> str:
+    """
+    Get a hero image URL using the configured provider.
+    IMAGE_PROVIDER=imagen  -> try Imagen 3, fall back to Pollinations on failure
+    IMAGE_PROVIDER=pollinations (default) -> always use free Pollinations
+    """
+    if IMAGE_PROVIDER == "imagen":
+        url = get_image_imagen(prompt, slug or "article")
+        if url:
+            return url
+        log.info("  Using Pollinations fallback for image")
+    return get_image_pollinations(prompt)
 
 
 # ── Slug helper ───────────────────────────────────────────────────────────────
@@ -493,10 +553,11 @@ def build_amazon_box(products: list, amazon_tag: str = None) -> str:
 
 # ── HTML Formatter ────────────────────────────────────────────────────────────
 def _clean(text: str) -> str:
-    """Sanitize text for JSON-LD — removes chars that break JSON parsing."""
+    """Sanitize text — removes HTML tags and chars that break JSON/HTML attrs."""
     if not text:
         return ""
-    return (str(text)
+    text = re.sub(r"<[^>]+>", "", str(text))  # strip any HTML tags
+    return (text
             .replace("\\", "")
             .replace('"', "'")
             .replace("\n", " ")
@@ -660,7 +721,7 @@ def format_html(article: dict, image_url: str) -> str:
         f'<script type="application/ld+json">\n{schema}\n</script>\n'
         f'<article style="font-family:Arial,sans-serif;line-height:1.9;'
         f'color:#222;max-width:800px;margin:0 auto">\n'
-        f'<img src="{image_url}" alt="{title}" '
+        f'<img src="{image_url}" alt="{_clean(title)}" '
         f'style="width:100%;border-radius:10px;margin-bottom:22px;display:block" '
         f'loading="lazy">\n'
         f'<p style="font-size:1.05em;line-height:1.9">{intro}</p>\n'
@@ -929,8 +990,10 @@ def run_cycle() -> bool:
 
         # Step 2 — Generate image
         log.info("[2/3] Generating image URL...")
+        slug_for_img = make_slug(article.get("english_title", "")) or "article"
         image_url = get_image_url(
-            article.get("image_prompt", f"{category} india technology")
+            article.get("image_prompt", f"{category} india technology"),
+            slug=slug_for_img,
         )
         log.info(f"  Image     : {image_url[:70]}...")
 
