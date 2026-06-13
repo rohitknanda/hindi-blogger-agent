@@ -48,6 +48,8 @@ GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "")
 INTERVAL_HOURS  = float(os.getenv("INTERVAL_HOURS", "6"))
 AUTO_PUBLISH    = os.getenv("AUTO_PUBLISH", "true").lower() == "true"
 DRAFTS_DIR      = Path(os.getenv("DRAFTS_DIR", "drafts"))
+AMAZON_TAG      = os.getenv("AMAZON_TAG", "")
+IMAGE_PROVIDER  = os.getenv("IMAGE_PROVIDER", "pollinations").lower()
 
 # WordPress
 WP_URL          = os.getenv("WP_URL", "").rstrip("/")
