@@ -54,6 +54,9 @@ jobs:
           AUTO_PUBLISH:         "true"
           GITHUB_RUN_NUMBER:    ${{ github.run_number }}
           CATEGORY:             ${{ github.event.inputs.category }}
+          # Amazon affiliate + image provider
+          AMAZON_TAG:           ${{ secrets.AMAZON_TAG }}
+          IMAGE_PROVIDER:       ${{ secrets.IMAGE_PROVIDER }}
         run: python run_once.py
 
       - name: Upload agent log
