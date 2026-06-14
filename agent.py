@@ -218,15 +218,42 @@ def generate_article(category: str) -> dict:
 
 # ── Image URL (Pollinations.ai — free) ────────────────────────────────────────
 def get_image_pollinations(prompt: str) -> str:
-    """Free image generation via Pollinations.ai — returns a direct URL."""
-    # Strip trailing spaces/punctuation before encoding to avoid %20? URL bug
-    clean = prompt[:200].strip().rstrip(".,; ")
+    """
+    Generate image via Pollinations.ai.
+    1. Request image generation (short prompt to avoid URL issues)
+    2. Pre-fetch to warm up the CDN cache
+    3. Upload to 0x0.st for a stable short URL
+    Falls back to original long URL if upload fails.
+    """
+    # Keep prompt short (80 chars max) to prevent URL truncation in Blogger
+    clean = prompt[:80].strip().rstrip(".,; ")
     safe  = urllib.parse.quote(clean)
     seed  = int(time.time()) % 99999
-    return (
+    poll_url = (
         f"https://image.pollinations.ai/prompt/{safe}"
         f"?width=1280&height=720&model=flux&nologo=true&seed={seed}&format=webp"
     )
+
+    try:
+        # Pre-fetch to trigger generation and get image bytes
+        log.info("  Fetching image from Pollinations...")
+        resp = requests.get(poll_url, timeout=60)
+        if resp.ok and resp.headers.get("content-type","").startswith("image"):
+            # Upload to 0x0.st for a stable, short URL
+            upload = requests.post(
+                "https://0x0.st",
+                files={"file": ("image.webp", resp.content, "image/webp")},
+                timeout=30,
+            )
+            if upload.ok and upload.text.strip().startswith("http"):
+                short_url = upload.text.strip()
+                log.info(f"  Image uploaded ✓ → {short_url}")
+                return short_url
+        log.warning("  Image upload failed — using direct Pollinations URL")
+    except Exception as e:
+        log.warning(f"  Image fetch/upload error: {e}")
+
+    return poll_url
 
 
 def get_image_imagen(prompt: str, slug: str) -> str:
