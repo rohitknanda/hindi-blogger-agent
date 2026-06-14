@@ -22,7 +22,6 @@ from pathlib import Path
 
 import requests
 import google.generativeai as genai
-from google import genai as genai_client  # new SDK for Imagen 3
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
@@ -220,8 +219,10 @@ def generate_article(category: str) -> dict:
 # ── Image URL (Pollinations.ai — free) ────────────────────────────────────────
 def get_image_pollinations(prompt: str) -> str:
     """Free image generation via Pollinations.ai — returns a direct URL."""
-    safe = urllib.parse.quote(prompt[:200])
-    seed = int(time.time()) % 99999
+    # Strip trailing spaces/punctuation before encoding to avoid %20? URL bug
+    clean = prompt[:200].strip().rstrip(".,; ")
+    safe  = urllib.parse.quote(clean)
+    seed  = int(time.time()) % 99999
     return (
         f"https://image.pollinations.ai/prompt/{safe}"
         f"?width=1280&height=720&model=flux&nologo=true&seed={seed}&format=webp"
