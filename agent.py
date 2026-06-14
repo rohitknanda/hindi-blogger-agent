@@ -217,42 +217,16 @@ def generate_article(category: str) -> dict:
 
 
 # ── Image URL (Pollinations.ai — free) ────────────────────────────────────────
-def _upload_image_bytes(img_bytes: bytes, filename: str) -> str:
-    """Try multiple free image hosts. Returns first working URL or empty string."""
-    hosts = [
-        # catbox.moe — no API key needed
-        lambda b, f: requests.post(
-            "https://catbox.moe/user/api.php",
-            data={"reqtype": "fileupload"},
-            files={"fileToUpload": (f, b, "image/webp")},
-            timeout=30,
-        ),
-        # litterbox.catbox.moe — temporary 72h host
-        lambda b, f: requests.post(
-            "https://litterbox.catbox.moe/resources/internals/api.php",
-            data={"reqtype": "fileupload", "time": "72h"},
-            files={"fileToUpload": (f, b, "image/webp")},
-            timeout=30,
-        ),
-    ]
-    for host_fn in hosts:
-        try:
-            r = host_fn(img_bytes, filename)
-            if r.ok and r.text.strip().startswith("http"):
-                return r.text.strip()
-        except Exception:
-            continue
-    return ""
-
-
 def get_image_pollinations(prompt: str) -> str:
     """
-    Generate image via Pollinations.ai, then upload to a stable host.
-    Keeps prompt short to avoid Blogger URL truncation.
+    Get article image via Pollinations.ai (AI-generated).
+    Falls back to Picsum (beautiful stock photo) if Pollinations
+    is unavailable from GitHub Actions.
     """
-    clean    = prompt[:80].strip().rstrip(".,; ")
-    safe     = urllib.parse.quote(clean)
-    seed     = int(time.time()) % 99999
+    clean = prompt[:80].strip().rstrip(".,; ")
+    safe  = urllib.parse.quote(clean)
+    seed  = int(time.time()) % 99999
+
     poll_url = (
         f"https://image.pollinations.ai/prompt/{safe}"
         f"?width=1280&height=720&model=flux&nologo=true&seed={seed}"
@@ -260,19 +234,31 @@ def get_image_pollinations(prompt: str) -> str:
 
     try:
         log.info("  Fetching image from Pollinations...")
-        resp = requests.get(poll_url, timeout=90)
+        resp = requests.get(poll_url, timeout=45)
         if resp.ok and "image" in resp.headers.get("content-type", ""):
-            log.info(f"  Image fetched: {len(resp.content)//1024} KB")
-            fname = f"article-{seed}.webp"
-            stable_url = _upload_image_bytes(resp.content, fname)
-            if stable_url:
-                log.info(f"  Image hosted ✓ → {stable_url}")
-                return stable_url
-            log.warning("  All image hosts failed — using Pollinations URL")
+            log.info(f"  Pollinations image: {len(resp.content)//1024} KB ✓")
+            # Upload to catbox.moe for stable short URL
+            try:
+                up = requests.post(
+                    "https://catbox.moe/user/api.php",
+                    data={"reqtype": "fileupload"},
+                    files={"fileToUpload": (f"img-{seed}.jpg", resp.content, "image/jpeg")},
+                    timeout=30,
+                )
+                if up.ok and up.text.strip().startswith("http"):
+                    log.info(f"  Image hosted ✓ → {up.text.strip()[:60]}")
+                    return up.text.strip()
+            except Exception:
+                pass
+            return poll_url
+        log.warning(f"  Pollinations returned: {resp.status_code} — using fallback")
     except Exception as e:
-        log.warning(f"  Image fetch error: {e}")
+        log.warning(f"  Pollinations unavailable: {e} — using fallback")
 
-    return poll_url
+    # Reliable fallback: Lorem Picsum (always works, beautiful photos)
+    fallback = f"https://picsum.photos/seed/{seed}/1280/720"
+    log.info(f"  Fallback image: {fallback}")
+    return fallback
 
 
 def get_image_imagen(prompt: str, slug: str) -> str:
