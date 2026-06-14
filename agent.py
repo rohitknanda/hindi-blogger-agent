@@ -217,41 +217,60 @@ def generate_article(category: str) -> dict:
 
 
 # ── Image URL (Pollinations.ai — free) ────────────────────────────────────────
+def _upload_image_bytes(img_bytes: bytes, filename: str) -> str:
+    """Try multiple free image hosts. Returns first working URL or empty string."""
+    hosts = [
+        # catbox.moe — no API key needed
+        lambda b, f: requests.post(
+            "https://catbox.moe/user/api.php",
+            data={"reqtype": "fileupload"},
+            files={"fileToUpload": (f, b, "image/webp")},
+            timeout=30,
+        ),
+        # litterbox.catbox.moe — temporary 72h host
+        lambda b, f: requests.post(
+            "https://litterbox.catbox.moe/resources/internals/api.php",
+            data={"reqtype": "fileupload", "time": "72h"},
+            files={"fileToUpload": (f, b, "image/webp")},
+            timeout=30,
+        ),
+    ]
+    for host_fn in hosts:
+        try:
+            r = host_fn(img_bytes, filename)
+            if r.ok and r.text.strip().startswith("http"):
+                return r.text.strip()
+        except Exception:
+            continue
+    return ""
+
+
 def get_image_pollinations(prompt: str) -> str:
     """
-    Generate image via Pollinations.ai.
-    1. Request image generation (short prompt to avoid URL issues)
-    2. Pre-fetch to warm up the CDN cache
-    3. Upload to 0x0.st for a stable short URL
-    Falls back to original long URL if upload fails.
+    Generate image via Pollinations.ai, then upload to a stable host.
+    Keeps prompt short to avoid Blogger URL truncation.
     """
-    # Keep prompt short (80 chars max) to prevent URL truncation in Blogger
-    clean = prompt[:80].strip().rstrip(".,; ")
-    safe  = urllib.parse.quote(clean)
-    seed  = int(time.time()) % 99999
+    clean    = prompt[:80].strip().rstrip(".,; ")
+    safe     = urllib.parse.quote(clean)
+    seed     = int(time.time()) % 99999
     poll_url = (
         f"https://image.pollinations.ai/prompt/{safe}"
-        f"?width=1280&height=720&model=flux&nologo=true&seed={seed}&format=webp"
+        f"?width=1280&height=720&model=flux&nologo=true&seed={seed}"
     )
 
     try:
-        # Pre-fetch to trigger generation and get image bytes
         log.info("  Fetching image from Pollinations...")
-        resp = requests.get(poll_url, timeout=60)
-        if resp.ok and resp.headers.get("content-type","").startswith("image"):
-            # Upload to 0x0.st for a stable, short URL
-            upload = requests.post(
-                "https://0x0.st",
-                files={"file": ("image.webp", resp.content, "image/webp")},
-                timeout=30,
-            )
-            if upload.ok and upload.text.strip().startswith("http"):
-                short_url = upload.text.strip()
-                log.info(f"  Image uploaded ✓ → {short_url}")
-                return short_url
-        log.warning("  Image upload failed — using direct Pollinations URL")
+        resp = requests.get(poll_url, timeout=90)
+        if resp.ok and "image" in resp.headers.get("content-type", ""):
+            log.info(f"  Image fetched: {len(resp.content)//1024} KB")
+            fname = f"article-{seed}.webp"
+            stable_url = _upload_image_bytes(resp.content, fname)
+            if stable_url:
+                log.info(f"  Image hosted ✓ → {stable_url}")
+                return stable_url
+            log.warning("  All image hosts failed — using Pollinations URL")
     except Exception as e:
-        log.warning(f"  Image fetch/upload error: {e}")
+        log.warning(f"  Image fetch error: {e}")
 
     return poll_url
 
