@@ -137,11 +137,121 @@ Return ONLY this JSON (no markdown, no code fences):
 }}"""
 
 
+# ── RSS Feeds — Google News (reliable, no auth needed) ───────────────────────
+RSS_FEEDS = {
+    "science": [
+        "https://news.google.com/rss/search?q=science+discovery+research+2026&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=ISRO+NASA+space+discovery+2026&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=Nature+journal+scientific+breakthrough+June+2026&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=biology+physics+chemistry+discovery+India&hl=en-IN&gl=IN&ceid=IN:en",
+    ],
+    "technology": [
+        "https://news.google.com/rss/search?q=AI+artificial+intelligence+technology+2026&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=IEEE+quantum+computing+semiconductor+2026&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=Springer+Nature+technology+research+paper+2026&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=India+technology+innovation+startup+2026&hl=en-IN&gl=IN&ceid=IN:en",
+    ],
+    "automobile": [
+        "https://news.google.com/rss/search?q=electric+vehicle+EV+India+launch+2026&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=SAE+automotive+engineering+technology+2026&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=Tata+Mahindra+Hyundai+electric+car+India&hl=en-IN&gl=IN&ceid=IN:en",
+        "https://news.google.com/rss/search?q=hydrogen+engine+autonomous+driving+2026&hl=en-IN&gl=IN&ceid=IN:en",
+    ],
+}
+
+
+# ── RSS Feed Fetcher ─────────────────────────────────────────────────────────
+def fetch_rss_headlines(category: str, max_items: int = 8) -> list:
+    """
+    Fetch latest headlines + abstracts from top journals via RSS.
+    Returns list of dicts with title, summary, source, link.
+    Falls back to empty list on any error.
+    """
+    import xml.etree.ElementTree as ET
+    from datetime import timezone
+
+    feeds = RSS_FEEDS.get(category, RSS_FEEDS["science"])
+    items = []
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+    }
+
+    for feed_url in feeds:
+        if len(items) >= max_items:
+            break
+        try:
+            resp = requests.get(feed_url, headers=headers, timeout=10)
+            if not resp.ok:
+                continue
+
+            root = ET.fromstring(resp.content)
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
+
+            # Handle both RSS and Atom formats
+            entries = root.findall(".//item") or root.findall(".//atom:entry", ns)
+
+            for entry in entries[:3]:
+                # RSS format
+                title   = entry.findtext("title") or entry.findtext("atom:title", namespaces=ns) or ""
+                summary = (entry.findtext("description") or
+                          entry.findtext("summary") or
+                          entry.findtext("atom:summary", namespaces=ns) or "")
+                link    = (entry.findtext("link") or
+                          entry.findtext("atom:link", namespaces=ns) or "")
+                if hasattr(link, "attrib"):
+                    link = link.get("href", "")
+
+                title   = re.sub(r"<[^>]+>", "", title).strip()
+                summary = re.sub(r"<[^>]+>", "", summary).strip()[:300]
+
+                if title:
+                    items.append({
+                        "title":   title,
+                        "summary": summary,
+                        "source":  feed_url.split("/")[2],
+                        "link":    link,
+                    })
+                if len(items) >= max_items:
+                    break
+        except Exception as e:
+            log.debug(f"  RSS {feed_url}: {e}")
+            continue
+
+    log.info(f"  RSS: fetched {len(items)} headlines for '{category}'")
+    return items
+
+
 # ── Article Generation ────────────────────────────────────────────────────────
-def generate_article(category: str, recent_titles: list = None) -> dict:
+def generate_article(category: str, recent_titles: list = None,
+                     rss_headlines: list = None) -> dict:
     sources_str = ", ".join(SOURCES.get(category, SOURCES["technology"]))
     today      = datetime.now().strftime("%B %d, %Y")
     month_year = datetime.now().strftime("%B %Y")
+
+    # Build RSS context block — real fresh articles from top journals
+    rss_block = ""
+    if rss_headlines:
+        hl_text = ""
+        for h in rss_headlines[:6]:
+            hl_text += f"- [{h['source']}] {h['title']}"
+            if h.get("summary"):
+                hl_text += f": {h['summary'][:150]}"
+            hl_text += "\n"
+        rss_block = (
+            f"\n\nRECENT REAL ARTICLES from top journals (use these as your source):\n"
+            f"{hl_text}"
+            f"Write your article based on ONE of these real recent stories."
+        )
 
     # Tell Gemini which topics to AVOID (already published)
     avoid_block = ""
@@ -158,7 +268,7 @@ def generate_article(category: str, recent_titles: list = None) -> dict:
         sources=sources_str,
         today=today,
         month_year=month_year,
-    ) + avoid_block
+    ) + rss_block + avoid_block
 
     log.info("  Calling Gemini API...")
     # Try models in order — fallback if quota exceeded
@@ -1016,10 +1126,18 @@ def run_cycle() -> bool:
         log.info("  Fetching recent posts for duplicate check...")
         recent_topics = get_recent_topics(days=30)
 
+        # Fetch fresh headlines from top journals
+        log.info("  Fetching RSS headlines from top journals...")
+        rss_headlines = fetch_rss_headlines(category)
+
         article = None
         for attempt in range(1, 5):  # Up to 4 attempts
             try:
-                article = generate_article(category, recent_titles=recent_topics)
+                article = generate_article(
+                    category,
+                    recent_titles=recent_topics,
+                    rss_headlines=rss_headlines,
+                )
                 # Check for duplicate topic
                 if is_duplicate_topic(article, recent_topics):
                     log.warning(f"  Attempt {attempt}/4: Duplicate topic — retrying...")
