@@ -272,12 +272,13 @@ def generate_article(category: str, recent_titles: list = None,
 
     log.info("  Calling Gemini API...")
     # Try models in order — fallback if quota exceeded
-    # Models confirmed working — updated June 2026
+    # Updated model list — June 2026
+    # Only use models confirmed working with google-generativeai package
     models_to_try = [
-        "gemini-flash-latest",        # primary ✓
-        "gemini-2.0-flash-lite",      # free tier
-        "gemini-1.5-flash",           # stable fallback
-        "gemini-2.5-flash-preview-05-20",  # latest preview
+        "gemini-flash-latest",            # primary — working ✓
+        "gemini-2.0-flash",               # stable
+        "gemini-2.0-flash-lite",          # lightweight
+        "gemini-2.5-flash-preview-05-20", # latest preview
     ]
     response = None
     last_error = None
