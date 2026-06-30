@@ -45,7 +45,11 @@ log = logging.getLogger("agent")
 # ── Configuration ─────────────────────────────────────────────────────────────
 PLATFORM        = os.getenv("PLATFORM", "wordpress").lower()  # "wordpress" or "blogger"
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "")
-INTERVAL_HOURS  = float(os.getenv("INTERVAL_HOURS", "6"))
+# Volume throttle: default 48h ≈ 1 post / 2 days ≈ ~15 posts/month.
+# This is the key lever against Google's "scaled content abuse" flag.
+# NOTE: when run via GitHub Actions, the *cron schedule in the workflow YAML*
+# is the real cadence control — set it to run at most once every 2-3 days.
+INTERVAL_HOURS  = float(os.getenv("INTERVAL_HOURS", "48"))
 AUTO_PUBLISH    = os.getenv("AUTO_PUBLISH", "true").lower() == "true"
 DRAFTS_DIR      = Path(os.getenv("DRAFTS_DIR", "drafts"))
 AMAZON_TAG      = os.getenv("AMAZON_TAG", "")
@@ -90,14 +94,31 @@ genai.configure(api_key=GEMINI_API_KEY)
 # ── Prompts ───────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert Hindi science journalist and SEO specialist at Vigyan Ki Duniya.
 Write in a warm, conversational, human voice — NOT like AI. Add personal observations, real-world analogies, and unique Indian perspective.
+
 STRICT RULES:
 1. Only cover: Science, Technology, Automobile — NO politics, NO LPG rules, NO general utility content
 2. Only write about events from the LAST 30 DAYS — never older topics
-3. Write like a real journalist: include surprising facts, emotional hooks, India-specific impact
+3. Write like a real journalist: surprising facts, emotional hooks, India-specific impact
 4. Vary sentence length — mix short punchy sentences with longer explanations
 5. Add rhetorical questions to engage readers
-6. Never sound like a template or AI — be original and specific
-7. Return ONLY raw JSON — no markdown, no backticks, no extra text"""
+6. Return ONLY raw JSON — no markdown, no backticks, no extra text
+
+FACTUAL INTEGRITY (this is the most important rule — violating it gets the site banned from AdSense):
+- NEVER invent quotes. Do not attribute statements to any person, journal, report, or institution
+  unless that exact statement appears in the SOURCE MATERIAL provided to you.
+- NEVER invent statistics, figures, percentages, dates, model names, or prices. If a specific number
+  is not in your source material, describe the idea qualitatively instead of fabricating a number.
+- NEVER invent fake-sounding authorities like "Mobility Engineering Technology (June 2026)".
+  Cite only the real outlets named in your source material.
+- If the source material is thin, write a shorter, honest article rather than padding it with invented detail.
+- It is always better to write "रिपोर्ट्स के अनुसार" (according to reports) than to fabricate a precise quote.
+
+TITLE RULES (no clickbait — Google penalises formulaic AI titles):
+- Do NOT use sensational power words: NO 'खुलासा', NO 'क्रांति'/'महाक्रांति', NO 'मचेगी',
+  NO 'तहलका', NO 'धमाका', NO 'चौंकाने वाला', NO 'हड़कंप'.
+- Lead the title with the actual subject/keyword a person would type into Google
+  (the product, company, technology, or discovery name), then a clear benefit or detail.
+- Write the title a knowledgeable human editor would write: specific, descriptive, honest."""
 
 ARTICLE_PROMPT = """Today's date is {today}. Write a comprehensive SEO-optimised Hindi blog article
 about a RECENT trending development in {category} from the LAST 30 DAYS ONLY.
@@ -107,23 +128,24 @@ WRITING STYLE:
 - Start with a relatable story, surprising fact, or thought-provoking question
 - Use "आप" and "हम" to directly address Indian readers
 - Include at least 2 India-specific implications (ISRO, Indian scientists, Indian consumers)
-- Add one expert quote or research citation
+- Cite facts ONLY from the source material below. Do NOT invent quotes, statistics, or institutions.
+  If you reference a figure or statement, it must come from the provided sources.
 - Vary tone: explain technical terms simply using everyday analogies
 - End with a strong CTA question that invites comments
 - Do NOT write about: politics, government schemes, LPG prices, daily news, or non-science topics
 
 Return ONLY this JSON (no markdown, no code fences):
 {{
-  "title": "Hindi title under 65 chars — use power words like 'खुलासा', 'चौंकाने वाला', 'पहली बार', 'क्रांति'. Must include main SEO keyword and create curiosity.",
+  "title": "Hindi title, 50-65 chars. MUST start with the real subject/keyword a person would Google (product, company, technology, or discovery name), then a specific, honest detail or benefit. NO clickbait words (खुलासा, क्रांति, मचेगी, तहलका, धमाका, चौंकाने वाला). Example good title: 'महिंद्रा BE.05 में Snapdragon चिप: रेंज और स्क्रीन की पूरी जानकारी'. Example BAD title: 'खुलासा: महिंद्रा में आ रहा सुपरकंप्यूटर, मचेगी क्रांति!'",
   "english_title": "4-6 lowercase English words with hyphens for URL slug",
-  "meta_description": "Hindi meta description under 150 chars",
+  "meta_description": "Unique Hindi meta description, 120-155 chars, written specifically for THIS article. Must name the actual topic and include the focus keyword. Do NOT use the generic site tagline. State what the reader will learn.",
   "focus_keyword": "Primary Hindi SEO keyword",
   "keywords": ["kw1","kw2","kw3","kw4","kw5","kw6","kw7"],
   "highlights": ["Key fact 1 in Hindi (under 15 words)", "Key fact 2", "Key fact 3", "Key fact 4", "Key fact 5"],
   "faq": [{{"q": "Hindi question about the topic?", "a": "Detailed Hindi answer in 2-3 sentences."}}, {{"q": "Second common question?", "a": "Answer."}}, {{"q": "Third question?", "a": "Answer."}}, {{"q": "Fourth question?", "a": "Answer."}}],
   "article": "Full Hindi article. Use ## for H2 headings, ### for H3. MINIMUM 1200 words. Structure: 1) Hook paragraph with story/surprising fact, 2) Background/what is this, 3) The main discovery/news with data, 4) Expert opinions, 5) India angle and impact, 6) Future implications, 7) Strong conclusion with CTA. Add real statistics, research citations, and analogies. Sound like a human expert, not AI.",
   "image_prompt": "Photorealistic 16:9 scene description in English. Max 100 words.",
-  "sources": ["Source Name: Article headline"],
+  "sources": ["Real outlet name from the source material : exact headline you based this on"],
   "tags": ["tag1","tag2","tag3","tag4","tag5"],
   "category": "{category}",
   "read_time": "X मिनट",
@@ -232,6 +254,46 @@ def fetch_rss_headlines(category: str, max_items: int = 8) -> list:
 
 
 # ── Article Generation ────────────────────────────────────────────────────────
+# Words that mark a title as low-quality clickbait. If the model relapses,
+# we strip/repair the title so the formulaic pattern never reaches the blog.
+CLICKBAIT_WORDS = [
+    "खुलासा", "महाक्रांति", "क्रांति", "मचेगी", "मचा", "तहलका",
+    "धमाका", "हड़कंप", "चौंकाने वाला", "चौंका",
+]
+
+
+def clean_clickbait_title(title: str) -> str:
+    """Strip the 'खुलासा: … मचेगी क्रांति!' formula if the model produces it."""
+    if not title:
+        return title
+    original = title
+    # Remove a leading "खुलासा:" / "खुलासा -" style prefix
+    title = re.sub(r"^\s*(खुलासा|बड़ी खबर|बड़ा खुलासा)\s*[:\-–—]\s*", "", title)
+    # Remove a trailing clickbait tail like "— मचेगी क्रांति!" / ", मचेगा तहलका!"
+    title = re.sub(
+        r"\s*[,\-–—]?\s*(अब\s+)?(मचेगी|मचेगा|मचा|शुरू हुई)?\s*"
+        r"(महाक्रांति|क्रांति|तहलका|धमाका|हड़कंप)[!?.]*\s*$",
+        "", title,
+    ).strip(" ,।-–—!")
+    if title != original:
+        log.info(f"  Title de-clickbaited: '{original[:45]}' → '{title[:45]}'")
+    return title.strip()
+
+
+def build_meta_fallback(article: dict) -> str:
+    """Construct a unique meta description if the model left it empty/generic."""
+    focus = article.get("focus_keyword", "").strip()
+    # First sentence of the article body, tags stripped
+    body = re.sub(r"[#*_>`]", "", article.get("article", "")).strip()
+    first = re.split(r"(?<=[।.!?])\s", body)[0] if body else ""
+    desc = (f"{focus}: {first}" if focus and focus.lower() not in first.lower() else first).strip()
+    return desc[:155].rsplit(" ", 1)[0] if len(desc) > 155 else desc
+
+
+# A generic site-tagline fingerprint we must NEVER let through as a meta description
+GENERIC_META_FINGERPRINT = "taaza jaankari hindi mein"
+
+
 def generate_article(category: str, recent_titles: list = None,
                      rss_headlines: list = None) -> dict:
     sources_str = ", ".join(SOURCES.get(category, SOURCES["technology"]))
@@ -333,6 +395,24 @@ def generate_article(category: str, recent_titles: list = None,
     if word_count < 600:
         log.warning(f"  Thin content: only {word_count} words — retrying...")
         raise ValueError(f"Thin content: {word_count} words (minimum 600)")
+
+    # ── Title hygiene — kill the "खुलासा … क्रांति" formula ────────────────────
+    article["title"] = clean_clickbait_title(article.get("title", ""))
+
+    # ── Meta description hygiene — must be unique, never the site tagline ──────
+    md = (article.get("meta_description") or "").strip()
+    if (not md) or (GENERIC_META_FINGERPRINT in md.lower()) or len(md) < 40:
+        article["meta_description"] = build_meta_fallback(article)
+        log.info(f"  Meta desc rebuilt: '{article['meta_description'][:55]}'")
+
+    # ── Attach the REAL source headlines we fed the model, with their links,
+    #    so format_html can render a verifiable References block on the post. ──
+    refs = []
+    for h in (rss_headlines or [])[:3]:
+        if h.get("title") and h.get("link"):
+            refs.append({"title": h["title"][:120], "link": h["link"],
+                         "source": h.get("source", "")})
+    article["_references"] = refs
 
     log.info(f"  Word count: {word_count} words ✓")
     return article
@@ -719,6 +799,50 @@ def build_amazon_box(products: list, amazon_tag: str = None) -> str:
 
 
 # ── HTML Formatter ────────────────────────────────────────────────────────────
+def build_sources_block(article: dict) -> str:
+    """Render a verifiable References block: real linked source articles +
+    the outlets the model cited. This is what AdSense reviewers look for as
+    proof the content is grounded in real reporting, not fabricated."""
+    refs = article.get("_references", []) or []
+    text_sources = [s for s in (article.get("sources", []) or []) if isinstance(s, str) and s.strip()]
+    if not refs and not text_sources:
+        return ""
+
+    rows = ""
+    for r in refs[:3]:
+        title = _clean(r.get("title", ""))
+        link  = r.get("link", "").strip()
+        src   = _clean(r.get("source", ""))
+        if not title or not link:
+            continue
+        label = f"{title}" + (f" — {src}" if src else "")
+        rows += (
+            '<li style="padding:5px 0;font-size:13px;line-height:1.7;color:#333">'
+            f'<a href="{link}" target="_blank" rel="nofollow noopener" '
+            f'style="color:#3b5bdb;text-decoration:underline">{label}</a></li>'
+        )
+    # Fall back to the model's textual sources only if we have no real links
+    if not rows:
+        for s in text_sources[:4]:
+            rows += (
+                '<li style="padding:5px 0;font-size:13px;line-height:1.7;color:#333">'
+                f'{_clean(s)}</li>'
+            )
+    if not rows:
+        return ""
+
+    return (
+        '<div style="background:#f7f9fc;border:1px solid #d7e0ee;border-radius:10px;'
+        'padding:14px 18px;margin-top:26px;font-family:Arial,sans-serif">'
+        '<div style="font-size:14px;font-weight:700;color:#1a1a2e;margin-bottom:8px">'
+        '&#128218; स्रोत / References</div>'
+        '<ul style="margin:0;padding-left:18px">' + rows + '</ul>'
+        '<div style="font-size:11px;color:#888;margin-top:8px">'
+        'यह लेख ऊपर दिए गए स्रोतों की रिपोर्टिंग पर आधारित है।</div>'
+        '</div>'
+    )
+
+
 def _clean(text: str) -> str:
     """Sanitize text — removes HTML tags and chars that break JSON/HTML attrs."""
     if not text:
@@ -831,6 +955,11 @@ def format_html(article: dict, image_url: str) -> str:
     if amazon_box:
         log.info(f"  Amazon box: {len(amazon_products)} products added ✓")
 
+    # Verifiable References block (real source links) — key AdSense trust signal
+    sources_block = build_sources_block(article)
+    if sources_block:
+        log.info(f"  Sources block: {len(article.get('_references', []))} refs added ✓")
+
     # Initialize @graph with Article node
     graph_nodes = [
         {
@@ -839,8 +968,8 @@ def format_html(article: dict, image_url: str) -> str:
             "description": _clean(meta_desc)[:150],
             "inLanguage": "hi",
             "image": {"@type": "ImageObject", "url": image_url, "width": 1280, "height": 720},
-            "author": {"@type": "Person", "name": "Vigyan Ki Duniya",
-                       "url": "https://www.vigyankiduniya.com/p/about-us.html"},
+            "author": {"@type": "Person", "name": "रोहित कुमार",
+                       "url": "https://www.linkedin.com/in/rohit-kumar-917154342"},
             "publisher": {"@type": "Organization", "name": "Vigyan Ki Duniya",
                           "url": "https://www.vigyankiduniya.com"},
             "datePublished": datetime.now().strftime("%Y-%m-%d"),
@@ -897,6 +1026,7 @@ def format_html(article: dict, image_url: str) -> str:
         f'<p style="font-size:1.05em;line-height:1.9">{rest}</p>\n'
         f'{excerpt_html}\n'
         f'{faq_html}\n'
+        f'{sources_block}\n'
         f'{amazon_box}\n'
         f'</article>'
     )
@@ -1130,6 +1260,14 @@ def run_cycle() -> bool:
         # Fetch fresh headlines from top journals
         log.info("  Fetching RSS headlines from top journals...")
         rss_headlines = fetch_rss_headlines(category)
+
+        # HARD GATE: never write from nothing. No real source headlines means
+        # the model would have to invent the story — exactly the scaled-content
+        # behaviour we are eliminating. Skip the cycle instead.
+        if not rss_headlines:
+            log.warning("  No real RSS headlines fetched — skipping cycle (no fabrication).")
+            stats["skipped"] += 1
+            return True
 
         article = None
         for attempt in range(1, 5):  # Up to 4 attempts
