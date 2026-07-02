@@ -9,6 +9,7 @@ Schedule  : Runs via APScheduler or GitHub Actions cron
 Images    : Pollinations.ai (free, no API key needed)
 """
 
+import base64
 import json
 import logging
 import os
@@ -149,6 +150,9 @@ WRITING STYLE:
   If you reference a figure or statement, it must come from the provided sources.
 - Vary tone: explain technical terms simply using everyday analogies
 - End with a strong CTA question that invites comments
+- Do NOT use markdown horizontal rules (---, ***, ___) to separate sections — use ## headings
+  only. The publishing pipeline has no renderer for horizontal rules; they show up as literal
+  dashes in the published article.
 - Do NOT write about: politics, government schemes, LPG prices, daily news, or non-science topics
 
 Return ONLY this JSON (no markdown, no code fences):
@@ -253,12 +257,28 @@ def fetch_rss_headlines(category: str, max_items: int = 8) -> list:
                 title   = re.sub(r"<[^>]+>", "", title).strip()
                 summary = re.sub(r"<[^>]+>", "", summary).strip()[:300]
 
+                # Google News RSS includes a <source url="https://...">Outlet Name</source>
+                # element per item — this is the REAL publisher name, unlike the feed URL's
+                # own domain (which is always "news.google.com" and useless as a citation).
+                source_el   = entry.find("source")
+                source_name = (source_el.text or "").strip() if source_el is not None else ""
+                source_home = source_el.get("url", "") if source_el is not None else ""
+                if not source_name:
+                    # Fallback: Google News titles are usually "Headline - Outlet Name"
+                    m = re.search(r"\s-\s([^-]+)$", title)
+                    source_name = m.group(1).strip() if m else feed_url.split("/")[2]
+                # Strip the redundant "- Outlet Name" suffix from the title itself,
+                # since we now carry the outlet separately in `source`.
+                if source_name and title.endswith(f"- {source_name}"):
+                    title = title[: -(len(source_name) + 2)].strip()
+
                 if title:
                     items.append({
-                        "title":   title,
-                        "summary": summary,
-                        "source":  feed_url.split("/")[2],
-                        "link":    link,
+                        "title":       title,
+                        "summary":     summary,
+                        "source":      source_name,
+                        "source_home": source_home,
+                        "link":        link,
                     })
                 if len(items) >= max_items:
                     break
@@ -295,6 +315,71 @@ def clean_clickbait_title(title: str) -> str:
     if title != original:
         log.info(f"  Title de-clickbaited: '{original[:45]}' → '{title[:45]}'")
     return title.strip()
+
+
+def resolve_original_url(google_news_url: str) -> str:
+    """Resolve a Google News RSS redirect link (news.google.com/rss/articles/...)
+    into the real publisher URL, so the References block links to the actual
+    source article instead of Google's wrapper page.
+
+    Google encodes the destination inside the URL's base64 segment. Most links
+    decode entirely offline; a minority need one extra request to Google's
+    internal batchexecute endpoint. Falls back to the original Google News
+    link on any failure — still a working link, just not the ideal one.
+    """
+    try:
+        parsed = urllib.parse.urlparse(google_news_url)
+        path = parsed.path.split("/")
+        if parsed.hostname != "news.google.com" or len(path) < 2 or path[-2] not in ("articles", "read"):
+            return google_news_url  # not a Google News redirect link — nothing to do
+
+        base64_str = path[-1]
+        decoded_bytes = base64.urlsafe_b64decode(base64_str + "==")
+        decoded_str = decoded_bytes.decode("latin1")
+
+        prefix = bytes([0x08, 0x13, 0x22]).decode("latin1")
+        if decoded_str.startswith(prefix):
+            decoded_str = decoded_str[len(prefix):]
+        suffix = bytes([0xD2, 0x01, 0x00]).decode("latin1")
+        if decoded_str.endswith(suffix):
+            decoded_str = decoded_str[: -len(suffix)]
+
+        bytes_array = bytearray(decoded_str, "latin1")
+        length = bytes_array[0]
+        decoded_str = decoded_str[2:length + 1] if length >= 0x80 else decoded_str[1:length + 1]
+
+        if decoded_str.startswith("http"):
+            return decoded_str
+
+        # A minority of links need one extra round-trip to Google's internal
+        # decode endpoint rather than decoding fully offline.
+        if decoded_str.startswith("AU_yqL"):
+            envelope = (
+                '[[["Fbv4je","[\\"garturlreq\\",[[\\"en-US\\",\\"US\\",[\\"FINANCE_TOP_INDICES\\",'
+                '\\"WEB_TEST_1_0_0\\"],null,null,1,1,\\"US:en\\",null,180,null,null,null,null,null,0,'
+                'null,null,[1608992183,723341000]],\\"en-US\\",\\"US\\",1,[2,3,4,8],1,0,\\"655000234\\",'
+                f'0,0,null,0],\\"{base64_str}\\"]",null,"generic"]]]'
+            )
+            resp = requests.post(
+                "https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je",
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+                    "Referer": "https://news.google.com/",
+                },
+                data={"f.req": envelope},
+                timeout=10,
+            )
+            if resp.ok:
+                text = resp.text
+                header = '[\\"garturlres\\",\\"'
+                footer = '\\",'
+                if header in text:
+                    real_url = text.split(header, 1)[1].split(footer, 1)[0]
+                    if real_url.startswith("http"):
+                        return real_url
+    except Exception as e:
+        log.debug(f"  Google News URL decode failed: {e}")
+    return google_news_url
 
 
 def build_meta_fallback(article: dict) -> str:
@@ -433,11 +518,15 @@ def generate_article(category: str, recent_titles: list = None,
         log.info(f"  Meta desc rebuilt: '{article['meta_description'][:55]}'")
 
     # ── Attach the REAL source headlines we fed the model, with their links,
-    #    so format_html can render a verifiable References block on the post. ──
+    #    so format_html can render a verifiable References block on the post.
+    #    Links are resolved from Google News' redirect wrapper to the actual
+    #    publisher URL — only for the handful of refs actually used, to keep
+    #    the extra network calls minimal. ──
     refs = []
     for h in (rss_headlines or [])[:3]:
         if h.get("title") and h.get("link"):
-            refs.append({"title": h["title"][:120], "link": h["link"],
+            resolved_link = resolve_original_url(h["link"])
+            refs.append({"title": h["title"][:120], "link": resolved_link,
                          "source": h.get("source", "")})
     article["_references"] = refs
 
@@ -891,6 +980,11 @@ def format_html(article: dict, image_url: str) -> str:
     body = _re.sub(r"[-—–]+\s*रोहित कुमार[^\n]*\n?", "", body)
     body = _re.sub(r"[-—–]+\s*Rohit Kumar[^\n]*\n?", "", body, flags=_re.IGNORECASE)
     body = _re.sub(r"[-—–]+\s*विज्ञान की दुनिया[^\n]*\n?", "", body)
+    # Strip markdown horizontal-rule lines (---, ***, ___) — format_html has no
+    # HTML equivalent for these, so they were leaking through as literal dashes
+    # in the rendered article. Section headings (##) already provide visual
+    # separation, so these lines are simply removed rather than converted.
+    body = re.sub(r"^\s*(-{3,}|\*{3,}|_{3,})\s*$", "", body, flags=re.M)
     # Convert markdown bold/italic to HTML
     body = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", body)
     body = re.sub(r"\*(.+?)\*", r"<em>\1</em>", body)
