@@ -411,6 +411,47 @@ def resolve_original_url(google_news_url: str) -> str:
     return google_news_url
 
 
+def _select_cited_headlines(rss_headlines: list, article: dict, max_refs: int = 3) -> list:
+    """Filter fetched RSS headlines down to only the ones the article actually
+    cites — matched against the model's own `sources` field (which names the
+    real outlet + headline it based the article on).
+
+    Without this, the References block was built from rss_headlines[:3], i.e.
+    'whichever 3 headlines were fetched first that cycle' — completely
+    unrelated to what the model actually wrote about whenever the category's
+    feed list put a different topic's feed first (e.g. an AI feed listed
+    before a quantum-computing feed under the same 'technology' category).
+    That produced a References block citing the wrong article's sources —
+    a real factual-integrity problem, not just a cosmetic one.
+    """
+    stated_sources = " | ".join(article.get("sources", []) or []).lower()
+    if not stated_sources:
+        return (rss_headlines or [])[:max_refs]
+
+    matched = []
+    for h in rss_headlines or []:
+        title = h.get("title", "")
+        if not title:
+            continue
+        words = [w for w in re.split(r"[\s,।:\-–—]+", title) if len(w) >= 4]
+        if not words:
+            continue
+        hits = sum(1 for w in words if w.lower() in stated_sources)
+        if hits / len(words) >= 0.3:  # at least ~30% word overlap with stated sources
+            matched.append(h)
+
+    if matched:
+        return matched[:max_refs]
+
+    # No overlap found — the model may have paraphrased its stated sources
+    # heavily. Rather than show confidently wrong references, fall back to
+    # nothing here; format_html already falls back to the model's own
+    # textual `sources` list when `_references` is empty.
+    log.warning("  No RSS headline matched the article's stated sources — "
+                "References block will use the model's text-only sources list")
+    return []
+
+
 def build_meta_fallback(article: dict) -> str:
     """Construct a unique, CTR-oriented meta description if the model left it empty/generic.
 
@@ -546,13 +587,15 @@ def generate_article(category: str, recent_titles: list = None,
         article["meta_description"] = build_meta_fallback(article)
         log.info(f"  Meta desc rebuilt: '{article['meta_description'][:55]}'")
 
-    # ── Attach the REAL source headlines we fed the model, with their links,
-    #    so format_html can render a verifiable References block on the post.
-    #    Links are resolved from Google News' redirect wrapper to the actual
-    #    publisher URL — only for the handful of refs actually used, to keep
-    #    the extra network calls minimal. ──
+    # ── Attach the REAL source headlines the article actually cites, with
+    #    their links, so format_html can render a verifiable References
+    #    block on the post. Only headlines matching the model's own stated
+    #    `sources` field are used — NOT just "whichever 3 were fetched
+    #    first" — to prevent citing an unrelated topic's headlines (see
+    #    _select_cited_headlines docstring). Links are resolved from Google
+    #    News' redirect wrapper to the actual publisher URL. ──
     refs = []
-    for h in (rss_headlines or [])[:3]:
+    for h in _select_cited_headlines(rss_headlines, article, max_refs=3):
         if h.get("title") and h.get("link"):
             resolved_link = resolve_original_url(h["link"])
             refs.append({"title": h["title"][:120], "link": resolved_link,
@@ -1002,7 +1045,7 @@ def _clean(text: str) -> str:
             .strip())
 
 
-def format_html(article: dict, image_url: str) -> str:
+def format_html(article: dict, image_url: str, existing_posts: list = None) -> str:
     body = article.get("article", "")
     # Strip author signatures Gemini sometimes adds
     import re as _re
@@ -1162,6 +1205,16 @@ def format_html(article: dict, image_url: str) -> str:
     else:
         intro = body[:400]
         rest  = body[400:]
+
+    # Internal linking runs ONLY on the article's own narrative text (intro +
+    # rest) — never on the full assembled page. Previously this ran on the
+    # entire HTML output after highlight_box/FAQ/sources/Amazon box were
+    # already appended, which let it match plain words like "India" inside
+    # static UI text (e.g. the "Amazon India" box header) and wrap them in
+    # links to unrelated posts.
+    if existing_posts:
+        intro = add_internal_links(intro, article, existing_posts)
+        rest  = add_internal_links(rest, article, existing_posts)
 
     return (
         f'<script type="application/ld+json">\n{schema}\n</script>\n'
@@ -1463,12 +1516,12 @@ def run_cycle() -> bool:
         # Step 3 — Publish or save draft
         if AUTO_PUBLISH:
             log.info(f"[3/3] Publishing to {PLATFORM.upper()}...")
-            html = format_html(article, image_url)
 
-            # Internal linking
+            # Internal linking — resolved BEFORE formatting so format_html can
+            # scope link insertion to the article's own body text only.
             log.info("  Fetching existing posts for internal linking...")
             existing = fetch_existing_posts()
-            html = add_internal_links(html, article, existing)
+            html = format_html(article, image_url, existing_posts=existing)
 
             if PLATFORM == "wordpress" and WP_URL and WP_USERNAME and WP_APP_PASSWORD:
                 url = publish_to_wordpress(article, html)
