@@ -324,8 +324,10 @@ def resolve_original_url(google_news_url: str) -> str:
 
     Google encodes the destination inside the URL's base64 segment. Most links
     decode entirely offline; a minority need one extra request to Google's
-    internal batchexecute endpoint. Falls back to the original Google News
-    link on any failure — still a working link, just not the ideal one.
+    internal batchexecute endpoint — which is undocumented and known to
+    rate-limit/block requests from datacenter IPs (GitHub Actions included).
+    Falls back through: offline decode → batchexecute → plain redirect
+    follow → original Google News link (still functional either way).
     """
     try:
         parsed = urllib.parse.urlparse(google_news_url)
@@ -349,36 +351,63 @@ def resolve_original_url(google_news_url: str) -> str:
         decoded_str = decoded_str[2:length + 1] if length >= 0x80 else decoded_str[1:length + 1]
 
         if decoded_str.startswith("http"):
+            log.info(f"  URL resolved (offline decode) → {decoded_str[:70]}")
             return decoded_str
 
         # A minority of links need one extra round-trip to Google's internal
         # decode endpoint rather than decoding fully offline.
         if decoded_str.startswith("AU_yqL"):
-            envelope = (
-                '[[["Fbv4je","[\\"garturlreq\\",[[\\"en-US\\",\\"US\\",[\\"FINANCE_TOP_INDICES\\",'
-                '\\"WEB_TEST_1_0_0\\"],null,null,1,1,\\"US:en\\",null,180,null,null,null,null,null,0,'
-                'null,null,[1608992183,723341000]],\\"en-US\\",\\"US\\",1,[2,3,4,8],1,0,\\"655000234\\",'
-                f'0,0,null,0],\\"{base64_str}\\"]",null,"generic"]]]'
-            )
-            resp = requests.post(
-                "https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je",
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
-                    "Referer": "https://news.google.com/",
-                },
-                data={"f.req": envelope},
-                timeout=10,
-            )
-            if resp.ok:
-                text = resp.text
-                header = '[\\"garturlres\\",\\"'
-                footer = '\\",'
-                if header in text:
-                    real_url = text.split(header, 1)[1].split(footer, 1)[0]
-                    if real_url.startswith("http"):
-                        return real_url
+            try:
+                envelope = (
+                    '[[["Fbv4je","[\\"garturlreq\\",[[\\"en-US\\",\\"US\\",[\\"FINANCE_TOP_INDICES\\",'
+                    '\\"WEB_TEST_1_0_0\\"],null,null,1,1,\\"US:en\\",null,180,null,null,null,null,null,0,'
+                    'null,null,[1608992183,723341000]],\\"en-US\\",\\"US\\",1,[2,3,4,8],1,0,\\"655000234\\",'
+                    f'0,0,null,0],\\"{base64_str}\\"]",null,"generic"]]]'
+                )
+                resp = requests.post(
+                    "https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je",
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+                        "Referer": "https://news.google.com/",
+                    },
+                    data={"f.req": envelope},
+                    timeout=10,
+                )
+                if resp.ok:
+                    text = resp.text
+                    header = '[\\"garturlres\\",\\"'
+                    footer = '\\",'
+                    if header in text:
+                        real_url = text.split(header, 1)[1].split(footer, 1)[0]
+                        if real_url.startswith("http"):
+                            log.info(f"  URL resolved (batchexecute) → {real_url[:70]}")
+                            return real_url
+                    log.warning("  batchexecute: response OK but marker not found — Google may have changed the response format")
+                else:
+                    log.warning(f"  batchexecute: HTTP {resp.status_code} — endpoint likely blocking this IP")
+            except Exception as e:
+                log.warning(f"  batchexecute request failed: {e}")
+
+            # Last-resort fallback: some Google News links still respond with a
+            # plain HTTP redirect to the publisher when fetched directly.
+            try:
+                redirect_resp = requests.get(
+                    google_news_url,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"},
+                    allow_redirects=True,
+                    timeout=10,
+                )
+                final_url = redirect_resp.url
+                if final_url and "news.google.com" not in final_url:
+                    log.info(f"  URL resolved (redirect follow) → {final_url[:70]}")
+                    return final_url
+            except Exception as e:
+                log.warning(f"  Redirect-follow fallback also failed: {e}")
+
+            log.warning(f"  Could not resolve real URL — keeping Google News link: {google_news_url[:70]}")
     except Exception as e:
-        log.debug(f"  Google News URL decode failed: {e}")
+        log.warning(f"  Google News URL decode failed: {e}")
     return google_news_url
 
 
