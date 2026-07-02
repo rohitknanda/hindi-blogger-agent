@@ -118,7 +118,24 @@ TITLE RULES (no clickbait — Google penalises formulaic AI titles):
   NO 'तहलका', NO 'धमाका', NO 'चौंकाने वाला', NO 'हड़कंप'.
 - Lead the title with the actual subject/keyword a person would type into Google
   (the product, company, technology, or discovery name), then a clear benefit or detail.
-- Write the title a knowledgeable human editor would write: specific, descriptive, honest."""
+- Write the title a knowledgeable human editor would write: specific, descriptive, honest.
+
+CTR RULES (search impressions are high but click-through is low — titles must earn the click
+without becoming clickbait; every technique below must stay 100% truthful to the article):
+- Prefer a CONCRETE, checkable detail over a vague claim: a real number, price, range, date,
+  version, or comparison beats an abstract adjective every time.
+  Good: 'Tata Curvv EV की रेंज 500km: कीमत और लॉन्च डेट'
+  Weak: 'Tata की नई इलेक्ट्रिक कार शानदार रेंज के साथ लॉन्च'
+- Where natural, phrase the title as the exact question a reader is Googling
+  ('X क्या है', 'X कैसे काम करता है', 'X vs Y: कौन बेहतर') — this matches search intent directly
+  and reads as a promise to answer, not as sensationalism.
+- Use brackets/colons to front-load the single most concrete fact: '(2026)', ': पूरी जानकारी',
+  ': कीमत और फीचर्स' — these act as honest scan-cues in a crowded results page.
+- If the article compares, ranks, or lists things, say so in the title ('टॉप 5', 'की तुलना') —
+  list/comparison framing reliably lifts CTR and is not clickbait when the article delivers it.
+- Avoid generic adjectives with no payoff ('जबरदस्त', 'जानिए', 'जरूर पढ़ें') unless immediately
+  followed by the specific fact that earns them.
+- Title length stays 50-65 chars — do not sacrifice specificity for cleverness."""
 
 ARTICLE_PROMPT = """Today's date is {today}. Write a comprehensive SEO-optimised Hindi blog article
 about a RECENT trending development in {category} from the LAST 30 DAYS ONLY.
@@ -136,9 +153,9 @@ WRITING STYLE:
 
 Return ONLY this JSON (no markdown, no code fences):
 {{
-  "title": "Hindi title, 50-65 chars. MUST start with the real subject/keyword a person would Google (product, company, technology, or discovery name), then a specific, honest detail or benefit. NO clickbait words (खुलासा, क्रांति, मचेगी, तहलका, धमाका, चौंकाने वाला). Example good title: 'महिंद्रा BE.05 में Snapdragon चिप: रेंज और स्क्रीन की पूरी जानकारी'. Example BAD title: 'खुलासा: महिंद्रा में आ रहा सुपरकंप्यूटर, मचेगी क्रांति!'",
+  "title": "Hindi title, 50-65 chars. MUST start with the real subject/keyword a person would Google (product, company, technology, or discovery name), then a specific, honest detail or benefit — a concrete number, price, date, version, or comparison, or phrase it as the exact question a reader is searching. NO clickbait words (खुलासा, क्रांति, मचेगी, तहलका, धमाका, चौंकाने वाला). Example good title: 'महिंद्रा BE.05 में Snapdragon चिप: रेंज और स्क्रीन की पूरी जानकारी'. Example BAD title (clickbait): 'खुलासा: महिंद्रा में आ रहा सुपरकंप्यूटर, मचेगी क्रांति!'. Example BAD title (too vague, low CTR): 'महिंद्रा की नई कार में जबरदस्त फीचर्स'.",
   "english_title": "4-6 lowercase English words with hyphens for URL slug",
-  "meta_description": "Unique Hindi meta description, 120-155 chars, written specifically for THIS article. Must name the actual topic and include the focus keyword. Do NOT use the generic site tagline. State what the reader will learn.",
+  "meta_description": "Unique Hindi meta description, 120-155 chars, written specifically for THIS article to maximise search click-through. Must name the actual topic and include the focus keyword AND at least one concrete detail (a number, date, price, or comparison) so it stands out from generic results. Phrase it as a direct promise of what the reader will learn or gain — not a plain summary sentence lifted from the article. Do NOT use the generic site tagline. Stay 100% factual to the article content.",
   "focus_keyword": "Primary Hindi SEO keyword",
   "keywords": ["kw1","kw2","kw3","kw4","kw5","kw6","kw7"],
   "highlights": ["Key fact 1 in Hindi (under 15 words)", "Key fact 2", "Key fact 3", "Key fact 4", "Key fact 5"],
@@ -281,12 +298,22 @@ def clean_clickbait_title(title: str) -> str:
 
 
 def build_meta_fallback(article: dict) -> str:
-    """Construct a unique meta description if the model left it empty/generic."""
+    """Construct a unique, CTR-oriented meta description if the model left it empty/generic.
+
+    Prefers a concrete 'highlight' fact (a number, date, comparison) over the plain first
+    sentence of the body, since a specific detail earns more clicks in search results than
+    a generic summary line.
+    """
     focus = article.get("focus_keyword", "").strip()
-    # First sentence of the article body, tags stripped
+    highlights = article.get("highlights") or []
+    concrete = next((h.strip() for h in highlights if h and h.strip()), "")
+
     body = re.sub(r"[#*_>`]", "", article.get("article", "")).strip()
     first = re.split(r"(?<=[।.!?])\s", body)[0] if body else ""
-    desc = (f"{focus}: {first}" if focus and focus.lower() not in first.lower() else first).strip()
+
+    # Prefer a concrete highlight fact; fall back to the first sentence.
+    payload = concrete if concrete else first
+    desc = (f"{focus}: {payload}" if focus and focus.lower() not in payload.lower() else payload).strip()
     return desc[:155].rsplit(" ", 1)[0] if len(desc) > 155 else desc
 
 
