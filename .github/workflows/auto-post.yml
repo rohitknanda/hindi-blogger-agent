@@ -1,14 +1,14 @@
-name: Hindi Auto-Blogger
+#name: Hindi Auto-Blogger
 
-on:
-  schedule:
+#on:
+  #schedule:
     # Runs every 2 hours — 12 articles/day (stays within Gemini free tier)
     # Gemini free tier: 1500 requests/day on gemini-1.5-flash
-    - cron: "0 */2 * * *"
+    #- cron: "0 */2 * * *"
 
   # Manual trigger from GitHub Actions tab
-  workflow_dispatch:
-    inputs:
+  #workflow_dispatch:
+   # inputs:
       category:
         description: "Category to post (empty = auto round-robin)"
         required: false
@@ -20,10 +20,10 @@ on:
           - "technology"
           - "automobile"
 
-jobs:
-  post-article:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+#jobs:
+  #post-article:
+    #runs-on: ubuntu-latest
+   # timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -47,13 +47,13 @@ jobs:
           WP_USERNAME:          ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD:      ${{ secrets.WP_APP_PASSWORD }}
           # Blogger (only needed if PLATFORM=blogger)
-          BLOG_ID:              ${{ secrets.BLOG_ID }}
-          GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
-          AUTO_PUBLISH:         "true"
-          GITHUB_RUN_NUMBER:    ${{ github.run_number }}
-          CATEGORY:             ${{ github.event.inputs.category }}
+          #BLOG_ID:              ${{ secrets.BLOG_ID }}
+         # GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
+          #GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+         # GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+         # AUTO_PUBLISH:         "true"
+         # GITHUB_RUN_NUMBER:    ${{ github.run_number }}
+         # CATEGORY:             ${{ github.event.inputs.category }}
           # Amazon affiliate + image provider
           AMAZON_TAG:           ${{ secrets.AMAZON_TAG }}
           IMAGE_PROVIDER:       ${{ secrets.IMAGE_PROVIDER }}
